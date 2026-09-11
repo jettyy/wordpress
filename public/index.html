@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>워프러시 · 워드프레스 애드센스 승인글 자동 작성</title>
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">W</span>
+    <div>
+      <h1>워프러시</h1>
+      <p>주제를 붙여넣으면 AI가 애드센스 승인 기준을 지킨 글과 썸네일을 만들어 워드프레스에 임시저장합니다.</p>
+    </div>
+  </div>
+  <div class="pills">
+    <span class="pill" id="pill-model">모델 확인 중</span>
+    <span class="pill" id="pill-claude">AI 확인 중</span>
+    <span class="pill" id="pill-browser">썸네일 확인 중</span>
+    <span class="pill" id="pill-site">연결 확인 중</span>
+  </div>
+</header>
+
+<main>
+  <section class="card" id="card-site">
+    <div class="card-head">
+      <h2>1. 워드프레스 연결</h2>
+      <span class="hint" id="site-detail">응용 프로그램 비밀번호는 이 컴퓨터에만 저장됩니다.</span>
+    </div>
+    <div class="grid">
+      <label class="wide">사이트 주소
+        <input id="s-site-url" type="url" placeholder="https://myblog.com" autocomplete="off" spellcheck="false">
+        <span class="sub">관리자 주소(/wp-admin)가 아니라 사이트 첫 화면 주소를 넣으세요.</span>
+      </label>
+      <label>사용자 이름
+        <input id="s-site-user" type="text" placeholder="워드프레스 로그인 아이디" autocomplete="off" spellcheck="false">
+      </label>
+      <label>응용 프로그램 비밀번호
+        <input id="s-site-pass" type="password" placeholder="xxxx xxxx xxxx xxxx xxxx xxxx" autocomplete="new-password">
+        <span class="sub" id="pass-state">아직 저장된 비밀번호가 없습니다.</span>
+      </label>
+    </div>
+    <div class="row">
+      <button class="btn primary" id="btn-connect">연결 확인</button>
+      <button class="btn" id="btn-categories">카테고리 다시 찾기</button>
+      <button class="btn ghost danger" id="btn-disconnect">연결 정보 삭제</button>
+    </div>
+    <div class="row blog-row">
+      <label class="inline wide-inline">
+        글을 넣을 카테고리
+        <select id="category-select"><option value="0">— 워드프레스 기본 카테고리 —</option></select>
+      </label>
+    </div>
+    <p class="note">
+      워드프레스 관리자에서 <b>사용자 &gt; 프로필 &gt; 응용 프로그램 비밀번호</b> 로 들어가
+      이름을 아무거나 적고 <b>[새 응용 프로그램 비밀번호 추가]</b> 를 누르면
+      <b>xxxx xxxx xxxx xxxx xxxx xxxx</b> 형태의 비밀번호가 한 번만 표시됩니다. 그것을 그대로 붙여넣으세요.<br>
+      로그인 비밀번호가 아닙니다. 이 프로그램은 로그인 비밀번호를 묻지 않고, 저장된 값을 외부로 보내지도 않습니다.
+      <b>https</b> 사이트여야 하며, 언제든 워드프레스에서 이 비밀번호만 따로 폐기할 수 있습니다.
+    </p>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>2. 주제 붙여넣기</h2>
+      <span class="hint" id="paste-count">0개 인식</span>
+    </div>
+    <textarea id="topics" rows="8" spellcheck="false"
+      placeholder="엑셀에서 주제 열을 복사해 그대로 붙여넣으세요.&#10;한 줄에 주제 하나씩 인식하고, 탭으로 나뉜 경우 첫 번째 열만 씁니다.&#10;&#10;예)&#10;2026년 취업률 높은 국가기술자격증 TOP 5&#10;비전공자가 3개월 안에 딸 수 있는 자격증 7가지&#10;전세 계약 전에 반드시 확인해야 하는 서류"></textarea>
+    <div class="row">
+      <button class="btn primary" id="btn-add">목록에 추가</button>
+      <button class="btn ghost" id="btn-clear-text">입력 지우기</button>
+    </div>
+    <p class="note">주제에 <b>TOP 5</b>, <b>7가지</b> 처럼 개수가 들어 있으면
+      항목마다 <b>상세 설명 · 자격 요건 · 활용 분야 · 장단점 · 준비 팁</b>을 세부 소제목으로 나눠 씁니다.
+      개수가 12개를 넘으면 큰 비교표를 나눠서 만들고 대표 항목만 상세하게 다룹니다.</p>
+  </section>
+
+  <section class="card" id="card-guide">
+    <div class="card-head">
+      <h2>3. AI에게 줄 지침 &amp; 참고 예시</h2>
+      <span class="hint" id="guideline-state">애드센스 필수 규칙은 자동으로 들어갑니다</span>
+    </div>
+
+    <label class="field-label" for="s-guideline">추가 지침 <span class="tag-strong">규칙 위에 덧붙여 적용</span></label>
+    <textarea id="s-guideline" rows="5" spellcheck="false"
+      placeholder="한 줄에 하나씩 쓰면 더 잘 지킵니다.&#10;&#10;예)&#10;수도권 기준으로 설명할 것&#10;비용은 대략적인 범위로만 언급할 것&#10;마지막에 준비 체크리스트를 넣을 것&#10;2026년 기준임을 본문에 밝힐 것"></textarea>
+    <p class="note">입력 후 자동으로 저장됩니다. 여기 쓴 내용은 프롬프트 맨 앞과 맨 끝에 두 번 들어갑니다.
+      다만 <b>애드센스 필수 준수 규칙(분량·문체·표·구조)은 지침보다 우선</b>합니다.
+      그래야 이 프로그램의 목적인 "승인되는 글"이 유지됩니다.</p>
+
+    <div class="divider-line"></div>
+
+    <div class="card-head tight">
+      <h3>참고 예시 글</h3>
+      <span class="hint" id="example-count">0개</span>
+    </div>
+    <p class="note tight">"이런 식으로 써줘" 하고 보여줄 글을 올리면 문체와 구성을 참고합니다.
+      txt / md / html / csv 파일을 올리거나 아래에 직접 붙여넣으세요. (내용을 베끼지는 않습니다)</p>
+    <div class="row">
+      <label class="btn file-btn">
+        파일 첨부
+        <input type="file" id="example-file" accept=".txt,.md,.markdown,.html,.htm,.csv,.json" multiple hidden>
+      </label>
+      <button class="btn ghost" id="btn-example-paste">직접 붙여넣기</button>
+    </div>
+    <div id="example-paste-box" class="hidden">
+      <input id="example-name" type="text" placeholder="예시 이름 (예: 승인된 내 자격증 글)">
+      <textarea id="example-text" rows="6" spellcheck="false" placeholder="참고할 글 전체를 붙여넣으세요."></textarea>
+      <div class="row">
+        <button class="btn primary" id="btn-example-save">예시 저장</button>
+        <button class="btn ghost" id="btn-example-cancel">취소</button>
+      </div>
+    </div>
+    <ul class="example-list" id="example-list"></ul>
+  </section>
+
+  <section class="card" id="card-rules">
+    <div class="card-head">
+      <h2>4. 애드센스 준수 규칙</h2>
+      <span class="hint">모든 글이 이 검사를 통과해야 저장됩니다</span>
+    </div>
+    <ul class="rule-list" id="rule-list"></ul>
+    <div class="grid">
+      <label>최소 분량 (공백 제외)
+        <input id="s-min-chars" type="number" min="800" max="6000" step="100">
+        <span class="sub">승인 기준 권장값은 1,800자입니다</span>
+      </label>
+      <label>H2 소제목 개수
+        <input id="s-sections" type="number" min="3" max="6">
+        <span class="sub">규칙상 3~4개가 적당합니다</span>
+      </label>
+      <label>보정 재요청 횟수
+        <input id="s-repairs" type="number" min="0" max="3">
+        <span class="sub">검사에 걸리면 그 항목만 짚어 다시 쓰게 합니다</span>
+      </label>
+      <label class="check"><input id="s-enforce" type="checkbox"> 검사에 걸리면 자동으로 고쳐 쓰기</label>
+      <label class="check"><input id="s-block" type="checkbox"> 끝내 못 고치면 저장하지 않기
+        <span class="sub">끄면 미준수 항목을 표시만 하고 초안으로 올립니다</span></label>
+      <label class="check"><input id="s-criteria" type="checkbox"> 서두에 선정 기준 밝히기</label>
+      <label class="check"><input id="s-faq" type="checkbox"> 마지막에 자주 묻는 질문 넣기</label>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>5. 설정</h2>
+      <button class="btn ghost small" id="btn-toggle-settings">펼치기</button>
+    </div>
+    <div class="settings hidden" id="settings">
+      <div class="grid">
+        <label class="wide">사용할 AI 모델
+          <select id="s-model"></select>
+          <span class="sub" id="model-note"></span>
+        </label>
+        <label class="wide hidden" id="model-custom-wrap">직접 입력할 모델 이름
+          <input id="s-model-custom" type="text" placeholder="예: claude-opus-4-8">
+        </label>
+
+        <label>말투<input id="s-tone" type="text"><span class="sub">규칙상 "~습니다 / ~입니다" 체를 벗어나면 검사에서 걸립니다</span></label>
+        <label>독자<input id="s-audience" type="text"></label>
+
+        <label class="check"><input id="s-more" type="checkbox"> 도입부 뒤에 "더 읽기" 넣기<span class="sub">목록 화면에 도입부까지만 보입니다</span></label>
+        <label class="check"><input id="s-tags" type="checkbox"> AI가 뽑은 태그를 워드프레스 태그로 등록</label>
+        <label class="check"><input id="s-slug" type="checkbox"> AI가 만든 영문 주소(슬러그) 사용<span class="sub">한글 주소보다 검색에 유리합니다</span></label>
+
+        <label>썸네일 스타일
+          <select id="s-thumb-style">
+            <option value="auto">AI가 선택</option>
+            <option value="minimal">minimal · 흰 배경 (정보성 글 권장)</option>
+            <option value="bold">bold · 진한 단색</option>
+            <option value="gradient">gradient · 그라데이션</option>
+            <option value="editorial">editorial · 잡지풍</option>
+          </select>
+        </label>
+        <label>썸네일 가로(px)<input id="s-thumb-w" type="number" min="600" max="2000" step="10"></label>
+        <label>썸네일 세로(px)<input id="s-thumb-h" type="number" min="400" max="2000" step="10"></label>
+        <label class="check"><input id="s-thumb-insert" type="checkbox"> 썸네일을 본문 안에 넣기</label>
+        <label class="check"><input id="s-thumb-featured" type="checkbox"> 대표 이미지로 지정<span class="sub">목록·공유 미리보기에 쓰입니다</span></label>
+        <label class="check"><input id="s-thumb-emoji" type="checkbox"> 썸네일에 이모지 허용<span class="sub">승인 심사에서는 꺼두는 편이 안전합니다</span></label>
+
+        <label>글 사이 최소 대기(초)<input id="s-delay-min" type="number" min="0" max="600"></label>
+        <label>글 사이 최대 대기(초)<input id="s-delay-max" type="number" min="0" max="1200"></label>
+        <label>실패 시 재시도 횟수<input id="s-retries" type="number" min="0" max="5"></label>
+      </div>
+      <div class="row">
+        <button class="btn primary" id="btn-save-settings">설정 저장</button>
+        <button class="btn" id="btn-test-ai">선택한 모델로 연결 테스트</button>
+        <button class="btn" id="btn-preview-thumb">썸네일 미리보기</button>
+      </div>
+      <p class="note">주제를 100개 돌리기 전에 <b>연결 테스트</b>를 한 번 눌러보세요.
+        모델을 쓸 수 없거나 CLI 로그인이 풀렸으면 여기서 바로 드러납니다.</p>
+      <div id="ai-test-result" class="test-result hidden"></div>
+      <iframe id="thumb-preview" class="thumb-preview hidden" title="썸네일 미리보기"></iframe>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>6. 실행</h2>
+      <span class="hint" id="run-stats">-</span>
+    </div>
+    <div class="row">
+      <button class="btn primary" id="btn-start">실행</button>
+      <button class="btn" id="btn-pause">일시정지</button>
+      <button class="btn" id="btn-stop">중지</button>
+      <button class="btn ghost" id="btn-clear-done">완료 항목 정리</button>
+      <button class="btn ghost danger" id="btn-clear-all">전체 비우기</button>
+    </div>
+    <div class="progress"><div class="bar" id="progress-bar"></div></div>
+    <div class="table-wrap">
+      <table id="job-table">
+        <thead>
+          <tr>
+            <th>#</th><th>주제</th><th>상태</th><th>제목 / 메모</th>
+            <th>글자</th><th>준수</th><th>표</th><th>모델</th><th>썸네일</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="job-body"><tr><td colspan="10" class="empty">아직 추가된 주제가 없습니다.</td></tr></tbody>
+      </table>
+    </div>
+    <p class="note">발행은 하지 않습니다. <b>임시저장</b>까지만 하니 워드프레스 글 목록의 <b>임시글</b>에서
+      사실관계를 확인하고 직접 발행하세요.</p>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>진행 로그</h2>
+      <button class="btn ghost small" id="btn-clear-log">지우기</button>
+    </div>
+    <div class="console" id="console"></div>
+  </section>
+</main>
+
+<div class="toast hidden" id="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>

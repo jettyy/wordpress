@@ -1,0 +1,118 @@
+import fs from 'node:fs';
+import { SETTINGS_FILE, ensureDirs } from './paths.js';
+
+export const DEFAULT_SETTINGS = {
+  // 워드프레스 사이트 (REST API + 응용 프로그램 비밀번호)
+  site: {
+    url: '',                     // 예: https://myblog.com
+    username: '',                // 워드프레스 로그인 아이디
+    appPassword: '',             // 사용자 > 프로필 > 응용 프로그램 비밀번호 에서 발급
+    categoryId: 0,               // 0 이면 워드프레스 기본 카테고리
+    categoryName: '',
+  },
+
+  // AI (claude CLI, 구독 요금제)
+  claude: {
+    command: 'claude',
+    model: '',                   // 비우면 CLI 기본 모델
+    timeoutMs: 420000,           // 애드센스 글은 길어서 넉넉히 잡는다.
+  },
+
+  // 글 설정
+  post: {
+    // 애드센스 승인 기준이 요구하는 문체다. 바꾸면 준수 점검에서 걸린다.
+    tone: '정중한 존댓말 (~습니다 / ~입니다)',
+    minChars: 1800,              // 공백 제외 최소 글자 수 (애드센스 준수 규칙)
+    sectionCount: 4,             // H2 소제목 개수 (규칙: 3~4개)
+    audience: '해당 주제의 정보를 처음 찾아보는 일반 독자',
+    extraGuideline: '',
+    addCriteria: true,           // 서두에 '선정 기준' 밝히기 (필수 규칙)
+    addFaq: true,                // 마지막에 자주 묻는 질문 (정보성 강화)
+    moreTag: true,               // 도입부 뒤에 <!--more--> (목록에 요약만 노출)
+    applyTags: true,             // AI가 뽑은 태그를 워드프레스 태그로 등록
+    useAiSlug: true,             // AI가 만든 영문 슬러그를 주소로 사용
+  },
+
+  // 애드센스 승인 준수 점검
+  adsense: {
+    enforce: true,               // 어기면 자동으로 고쳐 쓰게 한다
+    maxRepairs: 1,               // 보정 재요청 횟수 (호출이 늘어나므로 1회 권장)
+    blockOnFail: false,          // 끝내 못 고치면 저장하지 않고 실패로 둘지
+  },
+
+  // 썸네일
+  thumbnail: {
+    width: 1200,
+    height: 630,
+    style: 'auto',               // auto | bold | gradient | minimal | editorial
+    insert: true,                // 본문 안에 이미지 블록으로 넣기
+    featured: true,              // 대표 이미지(featured image)로도 지정
+    emoji: false,                // 애드센스 글은 기호를 자제하는 편이 안전하다
+  },
+
+  // 실행
+  run: {
+    delayMinSec: 20,
+    delayMaxSec: 60,
+    maxRetries: 1,
+    chromiumPath: '',            // 썸네일 렌더링에 쓸 크로미움 경로 (비우면 자동)
+  },
+};
+
+/** 대시보드로 내보내면 안 되는 값. 화면에는 채워졌는지만 알려준다. */
+const SECRET_PATHS = [['site', 'appPassword']];
+
+function deepMerge(base, patch) {
+  if (patch === null || patch === undefined) return base;
+  if (Array.isArray(base) || typeof base !== 'object') return patch;
+  if (typeof patch !== 'object') return base;
+  const out = { ...base };
+  for (const [key, value] of Object.entries(patch)) {
+    out[key] = key in base ? deepMerge(base[key], value) : value;
+  }
+  return out;
+}
+
+let cache = null;
+
+export function getSettings() {
+  if (cache) return cache;
+  ensureDirs();
+  let stored = {};
+  try {
+    stored = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
+  } catch {
+    stored = {};
+  }
+  cache = deepMerge(DEFAULT_SETTINGS, stored);
+  return cache;
+}
+
+export function saveSettings(patch) {
+  const clean = structuredClone(patch || {});
+  // 화면에서 되돌아온 마스킹 값(●●●●)으로 진짜 비밀번호를 덮어쓰지 않는다.
+  for (const [group, key] of SECRET_PATHS) {
+    const value = clean?.[group]?.[key];
+    if (typeof value === 'string' && /^[●•*]+$/.test(value.trim())) delete clean[group][key];
+  }
+
+  const next = deepMerge(getSettings(), clean);
+  ensureDirs();
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(next, null, 2), 'utf8');
+  // 응용 프로그램 비밀번호가 들어 있는 파일이다. 같은 컴퓨터의 다른 계정에서 못 읽게 한다.
+  try {
+    fs.chmodSync(SETTINGS_FILE, 0o600);
+  } catch {
+    // 윈도우 등 권한 모델이 다른 환경에서는 넘어간다.
+  }
+  cache = next;
+  return next;
+}
+
+/** 브라우저로 내려보낼 설정. 비밀번호는 값을 빼고 "채워짐" 여부만 남긴다. */
+export function publicSettings() {
+  const settings = structuredClone(getSettings());
+  settings.site.appPasswordSet = Boolean(getSettings().site.appPassword);
+  settings.site.appPassword = '';
+  return settings;
+}
