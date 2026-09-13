@@ -308,6 +308,9 @@ function renderSettings() {
   $('s-thumb-emoji').checked = Boolean(s.thumbnail.emoji);
 
   $('s-image').checked = Boolean(s.image.enabled);
+  $('s-image-mode').value = s.image.mode || 'full';
+  $('s-image-poster').value = s.image.poster || 'bold';
+  $('s-verify-text').checked = Boolean(s.image.verifyText);
   // 비어 있으면 자동. placeholder 가 그렇게 안내한다.
   $('s-image-model').value = s.image.model || '';
   $('s-image-style').value = s.image.style || 'flat';
@@ -432,6 +435,9 @@ function collectSettings() {
     },
     image: {
       enabled: $('s-image').checked,
+      mode: $('s-image-mode').value,
+      poster: $('s-image-poster').value,
+      verifyText: $('s-verify-text').checked,
       model: $('s-image-model').value.trim(),
       style: $('s-image-style').value,
     },
@@ -686,18 +692,21 @@ $('btn-test-ai').onclick = async () => {
 
 /* ---------- 썸네일 배경 그림 ---------- */
 
-for (const id of ['s-image', 's-image-model', 's-image-style']) {
+for (const id of ['s-image', 's-image-mode', 's-image-poster', 's-verify-text', 's-image-model', 's-image-style']) {
   $(id).addEventListener('change', async () => {
     await patchSettings({
       image: {
         enabled: $('s-image').checked,
+        mode: $('s-image-mode').value,
+        poster: $('s-image-poster').value,
+        verifyText: $('s-verify-text').checked,
         model: $('s-image-model').value.trim(),
         style: $('s-image-style').value,
       },
     });
     toast($('s-image').checked
-      ? '배경 그림 생성을 켰습니다. 키가 없으면 기존 썸네일로 만듭니다.'
-      : '배경 그림 생성을 껐습니다.');
+      ? '이미지 생성을 켰습니다. 키가 없으면 HTML 썸네일로 만듭니다.'
+      : '이미지 생성을 껐습니다.');
   });
 }
 
@@ -741,6 +750,8 @@ async function runImageTest({ refresh = false } = {}) {
         apiKey: $('s-image-key').value.trim(),
         model: $('s-image-model').value.trim(),
         style: $('s-image-style').value,
+        mode: $('s-image-mode').value,
+        poster: $('s-image-poster').value,
         refresh,
       },
     });
@@ -753,10 +764,20 @@ async function runImageTest({ refresh = false } = {}) {
     } else {
       box.classList.add('good');
       const price = data.usd ? ` · 장당 약 $${data.usd}` : '';
+      const full = data.mode === 'full';
+      const how = full
+        ? (data.auto ? '자동으로 한글을 잘 그리는 모델을 골랐습니다.' : '설정에 적은 모델을 썼습니다.')
+        : (data.auto ? '자동으로 가장 싼 모델을 골랐습니다.' : '설정에 적은 모델을 썼습니다.');
+      const textNote = data.textOk === false
+        ? `\n글자 확인: 깨짐 — ${data.textReason}\n(실제 실행에서는 한 번 더 그려보고, 그래도 깨지면 HTML 썸네일로 물러섭니다)`
+        : (data.textOk === true ? '\n글자 확인: 통과' : '');
       box.textContent =
         `성공 — ${data.model}${data.tier ? ` (${data.tier})` : ''}${price} · ${data.kb}KB\n`
-        + (data.auto ? '자동으로 가장 싼 모델을 골랐습니다.\n' : '설정에 적은 모델을 썼습니다.\n')
-        + '이 그림 위에 한글 문구가 얹힙니다. 그림 자체에는 글자가 없어야 정상입니다.'
+        + `${how}\n`
+        + (full
+          ? '아래 그림에 한글이 제대로 박혔는지 직접 확인해 주세요.'
+          : '이 그림 위에 한글 문구가 얹힙니다. 그림 자체에는 글자가 없어야 정상입니다.')
+        + textNote
         + candidateLines(data.candidates, data.model);
       preview.src = data.dataUri;
       preview.classList.remove('hidden');

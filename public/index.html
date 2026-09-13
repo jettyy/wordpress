@@ -215,9 +215,32 @@
         <label class="check"><input id="s-thumb-featured" type="checkbox"> 대표 이미지로 지정<span class="sub">목록·공유 미리보기에 쓰입니다</span></label>
         <label class="check"><input id="s-thumb-emoji" type="checkbox"> 썸네일에 이모지 허용<span class="sub">승인 심사에서는 꺼두는 편이 안전합니다</span></label>
 
-        <label class="wide check"><input id="s-image" type="checkbox"> 썸네일 배경을 이미지 API로 그리기
-          <span class="sub">그림에는 글자를 넣지 않고, 한글 문구는 브라우저가 그 위에 얹습니다.
-            그래서 가장 싼 모델을 써도 한글이 깨지지 않습니다. 실패하면 기존 단색 썸네일로 자동으로 돌아갑니다</span></label>
+        <label class="wide check"><input id="s-image" type="checkbox"> 썸네일을 이미지 API로 만들기
+          <span class="sub">끄면 지금까지처럼 HTML로 단색 썸네일을 만듭니다 (추가 비용 없음).
+            어느 쪽이든 생성이 실패하면 HTML 썸네일로 자동으로 돌아갑니다</span></label>
+        <label class="wide">만드는 방식
+          <select id="s-image-mode">
+            <option value="full">글자까지 통째로 그리기 — 포스터형 썸네일 (권장)</option>
+            <option value="overlay">배경 그림만 그리고 한글은 HTML로 얹기 — 싸고 안전</option>
+          </select>
+          <span class="sub">어느 쪽이든 <b>가장 싼 모델부터</b> 씁니다.
+            <b>통째로</b>는 제목·띠·뱃지가 다 들어간 포스터형 썸네일이 나옵니다.
+            싼 모델이 한글을 뭉갤 때가 있어서, 만든 뒤 글자를 확인하고 깨졌을 때만
+            다시 그리거나 한 단계 위 모델로 올라갑니다.
+            <b>배경만</b>은 한글을 브라우저가 그려서 절대 안 깨집니다</span>
+        </label>
+        <label>포스터 분위기
+          <select id="s-image-poster">
+            <option value="bold">bold · 강렬한 색과 굵은 글씨 (레퍼런스 스타일)</option>
+            <option value="clean">clean · 차분하고 정돈된 느낌</option>
+            <option value="playful">playful · 부드럽고 친근한 느낌</option>
+          </select>
+          <span class="sub">통째로 그리기에서 씁니다</span>
+        </label>
+        <label class="check"><input id="s-verify-text" type="checkbox"> 글자가 깨졌는지 확인하기
+          <span class="sub">만든 썸네일을 다시 읽어 한글이 맞는지 봅니다. 값은 거의 안 듭니다.
+            깨지면 같은(가장 싼) 모델로 한 번 더 → 그다음 싼 모델로 한 번 →
+            그래도 깨지면 HTML 썸네일. <b>끄면 깨진 채로 올라갑니다</b></span></label>
         <label>이미지 API 키
           <input id="s-image-key" type="password" placeholder="AIza..." autocomplete="new-password">
           <span class="sub" id="image-key-state">aistudio.google.com 에서 무료로 발급됩니다</span>

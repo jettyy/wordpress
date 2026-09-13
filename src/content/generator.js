@@ -81,15 +81,27 @@ function basicsBlock(settings, topic) {
   ].join('\n');
 }
 
-const THUMBNAIL_BLOCK = `[썸네일 문구]
-- headline: 18자 이내 / subline: 30자 이내 / badge: 6자 이내
-- style: bold, gradient, minimal, editorial 중 하나 (정보성 글은 minimal 이나 bold 가 잘 어울립니다)
-- accent: 어두운 계열 HEX (흰 글씨가 올라갑니다)
-- 썸네일 문구에도 특수문자와 이모지를 쓰지 마세요.
-- scene: 썸네일 배경으로 그릴 장면을 **영어 한 문장**으로. 이미지 생성 모델에 그대로 들어갑니다.
-  주제를 상징하는 사물이나 공간을 담되, 사람 얼굴과 상표는 피하세요.
-  그림에는 글자를 넣지 않으므로 문구나 간판을 묘사하지 마세요.
-  예) "an open notebook, safety helmet and blueprints on a clean desk, morning light"`;
+const THUMBNAIL_BLOCK = `[썸네일]
+썸네일은 이미지 생성 AI 가 **글자까지 통째로 그립니다.** 그래서 그림 안에 들어갈
+문구를 정확히 정해 주셔야 합니다. 짧고 굵을수록 잘 나옵니다.
+
+- posterLines: 썸네일에 가장 크게 박힐 제목을 **1~3줄로 끊어서** 배열로. 한 줄 12자 이내.
+  클릭하고 싶게 쓰되 낚시는 금물입니다.
+  예) ["4년제만 답이 아니다", "취업 최강 전문대"]
+- ribbon: 제목 아래 띠에 들어갈 한 줄. 12자 이내. 개수와 연도를 넣으면 좋습니다.
+  예) "TOP 50 대공개 (2026 최신)"
+- subline: 맨 아래 한 줄 요약. 24자 이내. 예) "실무, 자격증, 현장 경험으로 골랐습니다"
+- badge: 구석 뱃지에 들어갈 짧은 말. 6자 이내. 예) "전문대"
+- keywords: 아이콘 뱃지에 붙일 짧은 분류어 3~5개. 각 5자 이내.
+  예) ["간호보건", "반도체", "자동차", "항공", "IT"]
+- scene: 배경 그림으로 그릴 장면을 **영어 한 문장**으로. 주제를 상징하는 공간이나 사물.
+  사람 얼굴이 크게 나오는 구도와 상표는 피하세요.
+  예) "students in a bright technical college workshop with machines and computers"
+- accent: 어두운 계열 HEX / style: bold, gradient, minimal, editorial 중 하나
+  (이미지 생성이 꺼져 있을 때 쓰는 값입니다)
+
+썸네일 문구에는 특수문자와 이모지를 쓰지 마세요. 느낌표는 한 개까지 허용합니다.
+**본문 규칙과 달리 썸네일 문구는 "~습니다" 로 끝내지 않아도 됩니다.** 짧은 것이 우선입니다.`;
 
 function metaBlock() {
   return `[검색 최적화 필드]
@@ -143,7 +155,7 @@ function jsonShape({ withItems, withFaq, withCriteria, withTableRows }) {
   "summary": "한 줄 요약입니다.",
   "tags": ["태그1","태그2","태그3"],
   "guidelineCheck": "사용자 지침을 어떻게 반영했는지 한 줄 (지침 없으면 \\"\\")",
-  "thumbnail": {"headline":"...","subline":"...","badge":"...","style":"minimal","accent":"#1F3A93","scene":"english scene description, no text"},
+  "thumbnail": {"posterLines":["큰 제목 1줄","큰 제목 2줄"],"ribbon":"TOP 50 (2026 최신)","headline":"...","subline":"...","badge":"...","keywords":["분류1","분류2","분류3"],"scene":"english scene description","style":"minimal","accent":"#1F3A93"},
   "intro": ["도입 문단1", "도입 문단2", "도입 문단3"],${criteria}${table}
   "sections": [
     ${section}
@@ -381,7 +393,18 @@ export function normalize(raw, topic, settings, shape = 'general') {
       subline: String(thumb.subline || raw.summary || '').trim().slice(0, 60),
       badge: String(thumb.badge || '').trim().slice(0, 12),
       emoji: String(thumb.emoji || '').trim().slice(0, 4),
-      // 배경 그림 생성 프롬프트에 들어갈 장면 설명. 이미지 API 를 껐으면 안 쓰인다.
+      // 썸네일에 통째로 그려 넣을 문구들. 이미지 API 를 껐으면 안 쓰인다.
+      // 한 줄이 길면 이미지 모델이 글자를 뭉개므로 여기서 잘라 둔다.
+      posterLines: (Array.isArray(thumb.posterLines) ? thumb.posterLines : [])
+        .map((line) => String(line).trim().slice(0, 20))
+        .filter(Boolean)
+        .slice(0, 3),
+      ribbon: String(thumb.ribbon || '').trim().slice(0, 24),
+      keywords: (Array.isArray(thumb.keywords) ? thumb.keywords : [])
+        .map((word) => String(word).trim().slice(0, 8))
+        .filter(Boolean)
+        .slice(0, 5),
+      // 배경 그림 생성 프롬프트에 들어갈 장면 설명.
       scene: String(thumb.scene || '').trim().slice(0, 300),
       style,
       accent,

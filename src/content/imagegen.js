@@ -5,17 +5,16 @@ import { logger } from '../lib/events.js';
 import { IMAGE_MODEL_FILE, ensureDirs } from '../lib/paths.js';
 
 /**
- * 썸네일 배경 그림 생성.
+ * 썸네일 이미지 생성.
  *
- * 왜 그림만 만들고 글자는 안 넣는가 —
- * 이미지 생성 모델은 한글을 자주 뭉갠다. "통합 서열표 TOP 100" 을 그려 달라고 하면
- * 열 장 중 몇 장은 글자가 깨져 나오고, 100편을 돌리면 그걸 일일이 확인할 수 없다.
+ * 두 가지 방식이 있다.
+ *   full    — 제목·띠·뱃지까지 그림 안에 통째로 그린다. 포스터형 썸네일이 나온다.
+ *   overlay — 글자 없는 배경만 그리고 한글은 HTML 이 얹는다. 한글이 절대 안 깨진다.
  *
- * 그래서 역할을 나눈다.
- *   이미지 API  →  글자 없는 배경 그림만
- *   HTML 템플릿 →  그 위에 한글 문구를 얹기 (브라우저가 그리니 절대 안 깨진다)
+ * full 방식은 이미지 모델이 한글을 뭉갤 수 있다. 그래서 만들고 나서
+ * 글자를 다시 읽어 확인하고, 깨졌으면 다시 그리거나 HTML 썸네일로 물러선다.
  *
- * 모델은 **자동으로 가장 싼 것을 고른다.** 다만 구글 API 는 가격을 알려주지 않는다.
+ * 모델은 **언제나 가장 싼 것부터** 쓴다. 다만 구글 API 는 가격을 알려주지 않는다.
  * 그래서 둘을 나눠서 쓴다.
  *   - "지금 쓸 수 있는 모델이 무엇인가" → API 에 물어본다 (실시간)
  *   - "그중 무엇이 싼가"              → 아래 가격표 (사람이 관리)
@@ -36,42 +35,49 @@ const ASPECT_RATIOS = new Set(['1:1', '3:4', '4:3', '9:16', '16:9']);
 /* ------------------------------------------------------------------ */
 
 /**
- * 장당 대략 가격(USD, 1K 해상도 기준). 싼 순서로 정렬된 것이 아니라,
- * 이름 패턴에 값을 매기는 표다. 정렬은 이 값으로 한다.
+ * 장당 대략 가격(USD, 1K 해상도 기준). 정렬은 이 값으로 한다.
  *
  * ListModels 응답에는 가격이 없어서 여기에 적어 둘 수밖에 없다.
  * 가격이 바뀌면 이 표만 고치면 된다. 표에 없는 새 모델이 나와도
  * 아래 등급 이름 규칙(lite < fast < flash < pro)으로 대략 짐작한다.
+ *
+ * text 는 "그림 안에 한글을 얼마나 정확히 그려내는가" 짐작값이다.
+ * **정렬에는 쓰지 않는다.** 늘 싼 것부터 쓰고, 글자가 실제로 깨졌을 때만
+ * 다음 모델로 올라간다. 이 값은 화면에 참고로 보여주는 용도다.
  */
 const PRICE_TABLE = [
-  { match: /^imagen-[\d.]+-fast/i, usd: 0.02, label: 'Imagen Fast' },
-  { match: /flash-lite-image/i, usd: 0.034, label: 'Flash Lite' },
-  { match: /^gemini-2\.5-flash-image/i, usd: 0.039, label: 'Flash (구세대)' },
-  { match: /^imagen-[\d.]+-ultra/i, usd: 0.06, label: 'Imagen Ultra' },
-  { match: /^imagen-[\d.]+-generate/i, usd: 0.04, label: 'Imagen Standard' },
-  { match: /pro-image/i, usd: 0.134, label: 'Pro' },
-  { match: /flash-image/i, usd: 0.067, label: 'Flash' },
+  { match: /^imagen-[\d.]+-fast/i, usd: 0.02, label: 'Imagen Fast', text: 0 },
+  { match: /flash-lite-image/i, usd: 0.034, label: 'Flash Lite', text: 1 },
+  { match: /^gemini-2\.5-flash-image/i, usd: 0.039, label: 'Flash (구세대)', text: 1 },
+  { match: /^imagen-[\d.]+-ultra/i, usd: 0.06, label: 'Imagen Ultra', text: 1 },
+  { match: /^imagen-[\d.]+-generate/i, usd: 0.04, label: 'Imagen Standard', text: 0 },
+  { match: /pro-image/i, usd: 0.134, label: 'Pro', text: 3 },
+  { match: /flash-image/i, usd: 0.067, label: 'Flash', text: 2 },
 ];
 
 /** 표에 없는 새 모델의 가격을 등급 이름으로 짐작한다. */
 const TIER_GUESS = [
-  { match: /lite/i, usd: 0.035, label: '알 수 없음 (lite 추정)' },
-  { match: /fast/i, usd: 0.03, label: '알 수 없음 (fast 추정)' },
-  { match: /flash/i, usd: 0.07, label: '알 수 없음 (flash 추정)' },
-  { match: /pro|ultra/i, usd: 0.15, label: '알 수 없음 (pro 추정)' },
+  { match: /lite/i, usd: 0.035, label: '알 수 없음 (lite 추정)', text: 1 },
+  { match: /fast/i, usd: 0.03, label: '알 수 없음 (fast 추정)', text: 1 },
+  { match: /flash/i, usd: 0.07, label: '알 수 없음 (flash 추정)', text: 2 },
+  { match: /pro|ultra/i, usd: 0.15, label: '알 수 없음 (pro 추정)', text: 3 },
 ];
 
-/** 모델 이름 하나에 가격과 등급 이름을 붙인다. */
+/** 모델 이름 하나에 가격, 등급 이름, 글자 렌더링 점수를 붙인다. */
 export function priceOf(id) {
   for (const row of PRICE_TABLE) {
-    if (row.match.test(id)) return { usd: row.usd, label: row.label, known: true };
+    if (row.match.test(id)) {
+      return { usd: row.usd, label: row.label, text: row.text, known: true };
+    }
   }
   for (const row of TIER_GUESS) {
-    if (row.match.test(id)) return { usd: row.usd, label: row.label, known: false };
+    if (row.match.test(id)) {
+      return { usd: row.usd, label: row.label, text: row.text, known: false };
+    }
   }
   // 등급도 모르겠으면 비싼 쪽으로 본다. 모르는 모델을 골라 비싸게 쓰는 것보다
   // 아는 모델을 쓰는 편이 안전하기 때문이다.
-  return { usd: 0.2, label: '알 수 없음', known: false };
+  return { usd: 0.2, label: '알 수 없음', text: 1, known: false };
 }
 
 /* ------------------------------------------------------------------ */
@@ -140,7 +146,14 @@ export async function fetchModels(apiKey, { signal, timeoutMs = 30000 } = {}) {
   return models;
 }
 
-/** 이미지 모델만 골라 싼 순서로 정렬한다. */
+/**
+ * 이미지 모델만 골라 **싼 순서로** 정렬한다.
+ *
+ * 글자까지 그리는 full 모드에서도 싼 것부터 쓴다. 싼 모델이 한글을 뭉갤 수는
+ * 있지만 늘 그런 것은 아니고, 안 그래도 되는데 비싼 모델을 쓰는 쪽이 더 큰 손해다.
+ * 대신 만들고 나서 글자를 확인해서, **실제로 깨졌을 때만** 한 단계 올라간다.
+ * (maybeGenerateImage 참고)
+ */
 export function rankImageModels(models) {
   return models
     .filter(looksLikeImageModel)
@@ -151,11 +164,29 @@ export function rankImageModels(models) {
         displayName: model.displayName,
         usd: price.usd,
         tier: price.label,
+        text: price.text,        // 한글을 얼마나 잘 그리는지 (표시용, 정렬에는 안 씀)
         knownPrice: price.known,
       };
     })
-    // 값이 같으면 가격을 아는 쪽을 먼저 쓴다. 추정치로 고르는 위험을 줄인다.
-    .sort((a, b) => (a.usd - b.usd) || (Number(b.knownPrice) - Number(a.knownPrice)));
+    // 값이 같으면 가격을 아는 쪽을, 그다음엔 글자를 잘 그리는 쪽을 먼저 쓴다.
+    .sort((a, b) => (a.usd - b.usd)
+      || (Number(b.knownPrice) - Number(a.knownPrice))
+      || (b.text - a.text));
+}
+
+/** 이미지를 읽을 수 있는 값싼 모델. 글자가 깨졌는지 확인하는 데 쓴다. */
+export function pickVisionModel(models) {
+  const candidates = models
+    .filter((model) => (model.methods || []).includes('generateContent'))
+    .filter((model) => !/embedding|embed|aqa|tts|-live-|-image/i.test(model.id))
+    .filter((model) => /gemini/i.test(model.id));
+  // 글자만 몇 개 뱉는 일이라 가장 값싼 등급으로 충분하다.
+  const order = [/flash-lite/i, /flash/i, /pro/i];
+  for (const pattern of order) {
+    const found = candidates.find((model) => pattern.test(model.id));
+    if (found) return found.id;
+  }
+  return candidates[0]?.id || '';
 }
 
 /* ------------------------------------------------------------------ */
@@ -202,36 +233,48 @@ export async function getImageModels({ force = false, signal } = {}) {
   const cached = readCache();
   const ttlMs = Math.max(1, Number(image.modelCacheHours) || 24) * 3600 * 1000;
 
+  // 받아온 원본을 저장해 두고 정렬만 그때그때 한다.
+  // 모드를 바꿨다고 모델 목록을 다시 받아올 이유는 없다.
   const usable = cached
     && cached.keyFingerprint === fingerprint
-    && Array.isArray(cached.models) && cached.models.length
+    && Array.isArray(cached.raw) && cached.raw.length
     && (Date.now() - new Date(cached.at).getTime()) < ttlMs;
 
-  if (usable && !force) return { models: cached.models, at: cached.at, fresh: false };
+  if (usable && !force) {
+    return { models: rankImageModels(cached.raw), at: cached.at, fresh: false };
+  }
 
-  const models = rankImageModels(await fetchModels(apiKey, { signal }));
-  if (!models.length) {
+  const all = await fetchModels(apiKey, { signal });
+  const raw = all.filter(looksLikeImageModel);
+  if (!raw.length) {
     throw new Error(
       '이 API 키로 쓸 수 있는 이미지 생성 모델이 하나도 없습니다. '
       + 'aistudio.google.com 에서 키가 이미지 생성을 지원하는지 확인해 주세요.',
     );
   }
 
-  const saved = writeCache({ keyFingerprint: fingerprint, at: new Date().toISOString(), models });
+  const saved = writeCache({
+    keyFingerprint: fingerprint,
+    at: new Date().toISOString(),
+    raw,
+    visionModel: pickVisionModel(all),   // 글자가 깨졌는지 확인할 때 쓴다
+  });
+
+  const models = rankImageModels(raw);
   logger.info(
     `이미지 모델 ${models.length}개를 찾았습니다. 가장 싼 것: ${models[0].id} `
     + `(${models[0].tier}, 장당 약 $${models[0].usd})`,
   );
-  return { models: saved.models, at: saved.at, fresh: true };
+  return { models, at: saved.at, fresh: true };
 }
 
 /** 쓸 수 없다고 판명된 모델을 캐시에서 빼둔다. 다음 글부터 건너뛴다. */
 function dropModel(id) {
   const cached = readCache();
-  if (!cached?.models) return;
-  const models = cached.models.filter((model) => model.id !== id);
-  if (models.length === cached.models.length) return;
-  writeCache({ ...cached, models });
+  if (!cached?.raw) return;
+  const raw = cached.raw.filter((model) => model.id !== id);
+  if (raw.length === cached.raw.length) return;
+  writeCache({ ...cached, raw });
   logger.warn(`'${id}' 을(를) 쓸 수 있는 모델 목록에서 뺐습니다.`);
 }
 
@@ -259,6 +302,85 @@ export function pickAspectRatio(width, height) {
  * "글자를 넣지 마라" 를 여러 표현으로 반복한다. 한 번만 말하면 모델이
  * 간판이나 표지판 형태로 글자를 그려 넣는 일이 잦다.
  */
+/* ------------------------------------------------------------------ */
+/* full 모드 — 글자까지 통째로 그리는 포스터형 썸네일                     */
+/* ------------------------------------------------------------------ */
+
+const POSTER_LOOK = {
+  bold: 'bold Korean clickbait-style blog thumbnail poster, vivid saturated colors, '
+    + 'strong navy and orange and yellow accents, thick white outlines and drop shadows on the text, '
+    + 'energetic and eye-catching, high contrast',
+  clean: 'clean modern Korean blog thumbnail poster, calm navy and white palette with one accent color, '
+    + 'generous spacing, restrained and trustworthy, editorial feel',
+  playful: 'friendly Korean blog thumbnail poster, rounded soft shapes, cheerful pastel palette '
+    + 'with warm accents, approachable cartoon illustration style',
+};
+
+/**
+ * 프롬프트에 넣을 한 줄.
+ * 따옴표가 섞이면 지시가 끊기고, 줄바꿈이 들어가면 문단이 갈라진다.
+ * 둘 다 공백으로 바꾸고 남은 공백을 하나로 줄인다.
+ */
+const quote = (value) => `"${String(value || '').replace(/["\n]/g, ' ').replace(/\s+/g, ' ').trim()}"`;
+
+/**
+ * 글자까지 포함한 완성 썸네일 프롬프트.
+ *
+ * 핵심은 **어떤 글자가 어디에 들어가는지 한 글자씩 못박는 것**이다.
+ * "제목을 넣어줘" 라고 하면 모델이 알아서 문구를 지어내고, 그 과정에서
+ * 한글이 뭉개진다. 넣을 글자를 정확히 적어주고 "이 글자 말고는 아무것도
+ * 쓰지 마라" 고 해야 그나마 정확히 나온다.
+ */
+export function buildPosterPrompt(spec, poster) {
+  const lines = (Array.isArray(spec.posterLines) && spec.posterLines.length
+    ? spec.posterLines
+    : [spec.headline]).filter(Boolean).slice(0, 3);
+
+  const look = POSTER_LOOK[poster] || POSTER_LOOK.bold;
+  const scene = String(spec.scene || '').trim()
+    || 'a bright Korean workplace scene related to the topic';
+  const keywords = (Array.isArray(spec.keywords) ? spec.keywords : []).filter(Boolean).slice(0, 5);
+
+  const parts = [
+    look,
+    `wide banner composition. Background illustration: ${scene}`,
+
+    // 여기부터가 글자 지시. 넣을 문구를 한 줄씩 정확히 적는다.
+    'The poster must contain EXACTLY the following Korean text and NOTHING else:',
+    `Main headline, stacked on ${lines.length} line(s), the largest text on the poster, `
+      + `each line rendered exactly as written: ${lines.map(quote).join(' then ')}`,
+  ];
+
+  if (spec.ribbon) {
+    parts.push(`A ribbon or banner strip across the lower middle reading exactly ${quote(spec.ribbon)}`);
+  }
+  if (spec.subline) {
+    parts.push(`A smaller supporting line under the headline reading exactly ${quote(spec.subline)}`);
+  }
+  if (spec.badge) {
+    parts.push(`A small rounded badge in a corner reading exactly ${quote(spec.badge)}`);
+  }
+  if (keywords.length) {
+    parts.push(
+      'A vertical column of small circular icon badges along one side, each with a simple flat icon '
+      + `and a short Korean label under it, the labels being exactly: ${keywords.map(quote).join(', ')}`,
+    );
+  }
+
+  parts.push(
+    // 한글이 깨지는 것을 막는 지시. 여러 번 다르게 반복해야 그나마 듣는다.
+    'CRITICAL: every Korean character must be rendered perfectly and legibly, '
+    + 'correct Hangul syllable shapes, no broken, garbled, invented, duplicated or misspelled characters',
+    'Use a heavy rounded Korean sans-serif typeface (like Noto Sans KR Black) for the headline',
+    'Do NOT add any other text, no English words, no lorem ipsum, no watermark, no logo, no signature, '
+    + 'no website address, no page numbers, no extra captions beyond the lines listed above',
+    'Do not show any real person\'s face, no brand logos, no copyrighted characters',
+    'Text must sit on solid or shaded panels so it stays readable against the illustration',
+  );
+
+  return parts.join('. ');
+}
+
 export function buildImagePrompt(spec, style) {
   const scene = String(spec.scene || '').trim()
     || `a clean conceptual illustration about ${spec.headline || 'an informative article'}`;
@@ -404,16 +526,87 @@ async function attempt(model, prompt, ratio, apiKey, { signal, timeoutMs }) {
 
 /**
  * 쓸 모델을 순서대로 정한다.
- * 설정에 모델을 직접 적어 뒀으면 그것만, 비워 뒀으면 싼 순서로 여러 개.
+ * 설정에 모델을 직접 적어 뒀으면 그것만, 비워 뒀으면 순위대로 여러 개.
  */
-async function candidates({ signal }) {
+async function candidates({ signal, exclude }) {
   const { image } = getSettings();
   const manual = String(image.model || '').trim();
   if (manual) return [{ id: manual, tier: '직접 지정', usd: null }];
 
   const { models } = await getImageModels({ signal });
+  // 한글이 깨진다고 판명된 모델은 빼고 그다음으로 싼 것부터 쓴다.
+  const usable = exclude?.size ? models.filter((model) => !exclude.has(model.id)) : models;
   // 첫 번째가 죽어 있을 때를 대비해 뒤 후보까지 몇 개 들고 간다.
-  return models.slice(0, 4);
+  return usable.slice(0, 4);
+}
+
+/* ------------------------------------------------------------------ */
+/* 글자 검사                                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 그림 안의 한글이 제대로 나왔는지 이미지를 다시 읽어 확인한다.
+ *
+ * 글자를 이미지에 직접 그리게 하면 한글이 뭉개지는 일이 있다.
+ * 100편을 돌린 뒤에 알면 늦으므로 만들자마자 확인한다.
+ * 글자 몇 개만 돌려받는 호출이라 값은 거의 안 든다.
+ *
+ * @returns {Promise<{ok: boolean, reason: string}>}
+ */
+export async function verifyKoreanText(dataUri, expectedLines, { signal } = {}) {
+  const { image } = getSettings();
+  const apiKey = String(image.apiKey || '').trim();
+  const cached = readCache();
+  const model = cached?.visionModel;
+  if (!apiKey || !model) return { ok: true, reason: '확인할 모델이 없어 건너뜀' };
+
+  const match = /^data:([^;]+);base64,(.+)$/.exec(dataUri);
+  if (!match) return { ok: true, reason: '이미지를 읽지 못해 건너뜀' };
+
+  const wanted = expectedLines.filter(Boolean).map((line) => `"${line}"`).join(', ');
+  const prompt = [
+    '이 이미지에 있는 한글 글자를 그대로 읽어 주세요.',
+    `이 문구들이 오타 없이 정확히 들어 있어야 합니다: ${wanted}`,
+    '글자가 뭉개졌거나, 없는 글자가 섞였거나, 문구가 틀렸으면 실패입니다.',
+    '아래 JSON 만 출력하세요.',
+    '{"readable": true, "matches": true, "found": "이미지에서 읽은 글자", "problem": "문제가 있으면 한 줄"}',
+  ].join('\n');
+
+  try {
+    const response = await fetch(`${HOST}/${encodeURIComponent(model)}:generateContent`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
+      body: JSON.stringify({
+        contents: [{
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType: match[1], data: match[2] } },
+            { text: prompt },
+          ],
+        }],
+        generationConfig: { responseMimeType: 'application/json', temperature: 0 },
+      }),
+      signal: signal || AbortSignal.timeout(60000),
+    });
+
+    const json = await response.json();
+    if (!response.ok) return { ok: true, reason: `확인 실패, 넘어감 (${response.status})` };
+
+    const text = (json?.candidates?.[0]?.content?.parts || [])
+      .map((part) => part?.text).filter(Boolean).join('');
+    const verdict = JSON.parse(text);
+
+    if (verdict.readable === false || verdict.matches === false) {
+      return {
+        ok: false,
+        reason: verdict.problem || `읽힌 글자: ${String(verdict.found || '').slice(0, 80)}`,
+      };
+    }
+    return { ok: true, reason: '' };
+  } catch (error) {
+    // 확인 자체가 실패한 것을 "글자가 깨졌다"로 보면 멀쩡한 그림을 버리게 된다.
+    return { ok: true, reason: `확인하지 못해 넘어갑니다 (${error.message})` };
+  }
 }
 
 /**
@@ -425,16 +618,19 @@ async function candidates({ signal }) {
  * @returns {Promise<{dataUri, model, bytes, tier, usd, switched}>}
  * @throws  실패하면 사람이 읽을 수 있는 이유를 담아 던진다. 부르는 쪽에서 잡아 넘긴다.
  */
-export async function generateBackground(spec, { signal, aspectRatio } = {}) {
+export async function generateBackground(spec, { signal, aspectRatio, mode, exclude } = {}) {
   const { image } = getSettings();
   const apiKey = String(image.apiKey || '').trim();
   if (!apiKey) throw new Error('이미지 API 키가 비어 있습니다.');
 
   const ratio = ASPECT_RATIOS.has(aspectRatio) ? aspectRatio : '16:9';
-  const prompt = buildImagePrompt(spec, image.style);
-  const timeoutMs = image.timeoutMs || 120000;
+  const useFull = (mode || image.mode) === 'full';
+  const prompt = useFull
+    ? buildPosterPrompt(spec, image.poster)
+    : buildImagePrompt(spec, image.style);
+  const timeoutMs = image.timeoutMs || 180000;
 
-  const list = await candidates({ signal });
+  const list = await candidates({ signal, exclude });
   let lastError = null;
 
   for (const [index, candidate] of list.entries()) {
@@ -458,35 +654,97 @@ export async function generateBackground(spec, { signal, aspectRatio } = {}) {
   );
 }
 
+/** full 모드에서 그림 안에 정확히 들어가야 하는 문구들. */
+function expectedLines(spec) {
+  const lines = Array.isArray(spec.posterLines) && spec.posterLines.length
+    ? spec.posterLines
+    : [spec.headline];
+  return [...lines, spec.ribbon].filter(Boolean);
+}
+
 /**
- * 썸네일용 배경을 만들되, 실패해도 글을 막지 않는다.
+ * 썸네일 이미지를 만든다. 실패해도 글을 막지 않는다.
  * 꺼져 있거나 키가 없으면 조용히 null 을 준다.
  *
- * @returns {Promise<{dataUri, model, bytes}|null>}
+ * full 모드는 글자까지 그리게 하고, 글자가 깨졌으면 한 번 다시 그린다.
+ * 그래도 깨지면 null 을 돌려 HTML 썸네일로 물러선다.
+ *
+ * @returns {Promise<{dataUri, model, bytes, mode}|null>}
  */
-export async function maybeGenerateBackground(spec, { signal, width, height, jobId = '' } = {}) {
+export async function maybeGenerateImage(spec, { signal, width, height, jobId = '' } = {}) {
   const { image } = getSettings();
   if (!image.enabled) return null;
   if (!String(image.apiKey || '').trim()) {
-    logger.warn('이미지 배경 생성이 켜져 있지만 API 키가 없습니다. 단색 썸네일로 만듭니다.', { jobId });
+    logger.warn('이미지 생성이 켜져 있지만 API 키가 없습니다. HTML 썸네일로 만듭니다.', { jobId });
     return null;
   }
 
-  try {
-    const result = await generateBackground(spec, {
-      signal,
-      aspectRatio: pickAspectRatio(width, height),
-    });
+  const full = image.mode === 'full';
+  const aspectRatio = pickAspectRatio(width, height);
+  const what = full ? '썸네일' : '썸네일 배경 그림';
+  const checking = full && image.verifyText;
+
+  /**
+   * 항상 **가장 싼 모델부터** 쓴다.
+   * 글자가 깨졌을 때만 이렇게 올라간다.
+   *   1) 같은(가장 싼) 모델로 한 번 더 — 그냥 운이 나빴을 수 있다
+   *   2) 그다음으로 싼 모델로 한 번 — 이 모델이 한글을 못 그리는 것일 수 있다
+   *   3) 그래도 깨지면 HTML 썸네일 (한글이 절대 안 깨진다)
+   * 대부분은 1번에서 끝나므로 값은 가장 싼 모델 한 장 값이다.
+   */
+  const tries = checking ? 3 : 1;
+  const broken = new Set();
+  let lastReason = '';
+
+  for (let attempt = 1; attempt <= tries; attempt += 1) {
+    // 두 번째까지는 같은(가장 싼) 모델, 세 번째부터 다음으로 싼 모델.
+    const exclude = attempt >= 3 ? broken : undefined;
+
+    let result;
+    try {
+      result = await generateBackground(spec, { signal, aspectRatio, exclude });
+    } catch (error) {
+      // 그림은 글의 부속물이다. 여기서 실패했다고 1,800자짜리 글을 버리지 않는다.
+      logger.warn(`${what} 생성 실패, HTML 썸네일로 만듭니다: ${error.message}`, { jobId });
+      return null;
+    }
+
     const cost = result.usd ? `, 장당 약 $${result.usd}` : '';
-    logger.info(
-      `썸네일 배경 그림을 만들었습니다. (${result.model}${result.tier ? ` · ${result.tier}` : ''}`
-      + `${cost}, ${Math.round(result.bytes / 1024)}KB)`,
+    const made = `${result.model}${result.tier ? ` · ${result.tier}` : ''}${cost}, `
+      + `${Math.round(result.bytes / 1024)}KB`;
+
+    if (!checking) {
+      logger.info(`${what}을(를) 만들었습니다. (${made})`, { jobId });
+      return { ...result, mode: image.mode };
+    }
+
+    const verdict = await verifyKoreanText(result.dataUri, expectedLines(spec), { signal });
+    if (verdict.ok) {
+      logger.info(
+        `${what}을(를) 만들었습니다. (${made}`
+        + `${verdict.reason ? ` · ${verdict.reason}` : ' · 글자 확인 통과'}`
+        + `${attempt > 1 ? ` · ${attempt}번째 시도` : ''})`,
+        { jobId },
+      );
+      return { ...result, mode: image.mode };
+    }
+
+    lastReason = verdict.reason;
+    broken.add(result.model);
+    logger.warn(
+      `썸네일의 한글이 제대로 안 나왔습니다 (${attempt}/${tries}, ${result.model}): ${verdict.reason}`
+      + (attempt === 2 ? ' — 다음으로 싼 모델로 바꿔 봅니다.' : ''),
       { jobId },
     );
-    return result;
-  } catch (error) {
-    // 그림은 글의 부속물이다. 여기서 실패했다고 1,800자짜리 글을 버리지 않는다.
-    logger.warn(`배경 그림 생성 실패, 단색 썸네일로 만듭니다: ${error.message}`, { jobId });
-    return null;
   }
+
+  logger.warn(
+    `한글이 계속 깨져 HTML 썸네일로 만듭니다. 마지막 문제: ${lastReason}`
+    + ' (설정에서 "배경만 그리기" 로 바꾸면 한글이 깨질 일이 없습니다)',
+    { jobId },
+  );
+  return null;
 }
+
+/** 예전 이름. 부르는 곳이 남아 있을 수 있어 남겨 둔다. */
+export const maybeGenerateBackground = maybeGenerateImage;

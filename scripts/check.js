@@ -18,7 +18,8 @@ import { buildMarkdown } from '../src/content/markdown.js';
 import { DEFAULT_SETTINGS, saveSettings, getSettings, publicSettings } from '../src/lib/settings.js';
 import { detectShape } from '../src/content/ranking.js';
 import {
-  buildImagePrompt, pickAspectRatio, looksLikeImageModel, rankImageModels, priceOf,
+  buildImagePrompt, buildPosterPrompt, pickAspectRatio,
+  looksLikeImageModel, rankImageModels, pickVisionModel, priceOf,
 } from '../src/content/imagegen.js';
 import { renderTemplate } from '../src/content/templates/index.js';
 import { buildResearchBlock, isUsableUrl } from '../src/content/research.js';
@@ -490,14 +491,16 @@ test('이미지 생성 모델만 골라낸다', () => {
   );
 });
 
-test('쓸 수 있는 모델을 싼 순서로 정렬한다', () => {
-  const ranked = rankImageModels([
-    { id: 'gemini-3-pro-image', methods: ['generateContent'] },
-    { id: 'gemini-3.1-flash-image', methods: ['generateContent'] },
-    { id: 'gemini-3.1-flash-lite-image', methods: ['generateContent'] },
-    { id: 'gemini-3-pro', methods: ['generateContent'] },          // 이미지 모델 아님
-    { id: 'text-embedding-004', methods: ['embedContent'] },       // 이미지 모델 아님
-  ]);
+const imageModelPool = [
+  { id: 'gemini-3-pro-image', methods: ['generateContent'] },
+  { id: 'gemini-3.1-flash-image', methods: ['generateContent'] },
+  { id: 'gemini-3.1-flash-lite-image', methods: ['generateContent'] },
+  { id: 'gemini-3-pro', methods: ['generateContent'] },          // 이미지 모델 아님
+  { id: 'text-embedding-004', methods: ['embedContent'] },       // 이미지 모델 아님
+];
+
+test('언제나 가장 싼 모델부터 쓴다', () => {
+  const ranked = rankImageModels(imageModelPool);
   assert.deepEqual(
     ranked.map((m) => m.id),
     ['gemini-3.1-flash-lite-image', 'gemini-3.1-flash-image', 'gemini-3-pro-image'],
@@ -505,6 +508,52 @@ test('쓸 수 있는 모델을 싼 순서로 정렬한다', () => {
   );
   assert.equal(ranked[0].tier, 'Flash Lite');
   assert.ok(ranked[0].usd < ranked[2].usd, '가격이 오름차순이 아닙니다');
+  // 글자 렌더링 점수는 참고용일 뿐, 순서를 바꾸면 안 된다.
+  assert.ok(ranked[0].text < ranked[2].text, '이 표본은 싼 쪽이 글자에 약한 것이 맞습니다');
+});
+
+test('글자 확인에 쓸 값싼 모델을 고른다', () => {
+  const picked = pickVisionModel([
+    { id: 'gemini-3-pro', methods: ['generateContent'] },
+    { id: 'gemini-3.1-flash-lite', methods: ['generateContent'] },
+    { id: 'gemini-3.1-flash-image', methods: ['generateContent'] },
+    { id: 'text-embedding-004', methods: ['embedContent'] },
+  ]);
+  assert.equal(picked, 'gemini-3.1-flash-lite', '가장 값싼 텍스트 모델이 아닙니다');
+  // 이미지 생성 모델은 글자를 읽는 용도로 고르면 안 된다.
+  assert.ok(!picked.includes('-image'));
+});
+
+test('포스터 프롬프트에 넣을 문구를 한 줄씩 못박는다', () => {
+  const prompt = buildPosterPrompt({
+    posterLines: ['4년제만 답이 아니다', '취업 최강 전문대'],
+    ribbon: 'TOP 50 대공개 (2026 최신)',
+    subline: '실무, 자격증, 현장 경험으로 골랐습니다',
+    badge: '전문대',
+    keywords: ['간호보건', '반도체', '항공'],
+    scene: 'a bright technical college workshop',
+  }, 'bold');
+
+  for (const line of ['4년제만 답이 아니다', '취업 최강 전문대', 'TOP 50 대공개 (2026 최신)', '전문대', '간호보건']) {
+    assert.ok(prompt.includes(line), `"${line}" 이 프롬프트에 없습니다`);
+  }
+  assert.ok(prompt.includes('a bright technical college workshop'), '장면 설명이 없습니다');
+  // 한글이 깨지지 않게 하는 지시가 들어 있어야 한다.
+  assert.ok(/every Korean character must be rendered perfectly/i.test(prompt), '한글 정확도 지시가 없습니다');
+  assert.ok(/Do NOT add any other text/i.test(prompt), '다른 글자 금지 지시가 없습니다');
+  // 배경 전용 프롬프트와 달리 여기서는 글자를 넣어야 한다.
+  assert.ok(!/^no text/m.test(prompt), '포스터인데 글자 금지가 들어갔습니다');
+});
+
+test('posterLines 가 없으면 headline 으로 대신한다', () => {
+  const prompt = buildPosterPrompt({ headline: '겨울 캠핑 장비 정리' }, 'clean');
+  assert.ok(prompt.includes('겨울 캠핑 장비 정리'), '제목이 안 들어갔습니다');
+});
+
+test('문구에 든 따옴표와 줄바꿈이 프롬프트를 깨뜨리지 않는다', () => {
+  const prompt = buildPosterPrompt({ posterLines: ['이건 "인용" 이다\n두 줄'] }, 'bold');
+  assert.ok(!prompt.includes('\n'), '줄바꿈이 그대로 들어갔습니다');
+  assert.ok(prompt.includes('이건 인용 이다 두 줄'), '따옴표 정리가 안 됐습니다');
 });
 
 test('가격표에 없는 새 모델도 등급 이름으로 짐작한다', () => {

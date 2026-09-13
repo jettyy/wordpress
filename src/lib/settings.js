@@ -61,13 +61,25 @@ export const DEFAULT_SETTINGS = {
     enabled: false,              // 켜려면 API 키가 필요하다. 기본은 꺼짐.
     provider: 'google',          // 현재는 구글(Gemini API)만
     apiKey: '',                  // aistudio.google.com 에서 발급
-    // 비워두면 **자동**. 계정에서 쓸 수 있는 이미지 모델을 받아와
-    // 가장 싼 것을 고르고, 그 모델이 없어지면 다음으로 싼 것으로 넘어간다.
-    // 특정 모델을 고집하고 싶을 때만 이름을 적는다.
+
+    // full    — 글자까지 포함한 완성 썸네일을 API 가 통째로 그린다 (레퍼런스 스타일)
+    // overlay — 글자 없는 배경만 API 가 그리고 한글은 HTML 이 얹는다 (싸고 안전)
+    mode: 'full',
+
+    // 비워두면 **자동**. 계정에서 쓸 수 있는 이미지 모델을 받아와 고른다.
+    // full 모드에서는 한글을 잘 그리는 모델을 먼저,
+    // overlay 모드에서는 가장 싼 모델을 먼저 고른다.
     model: '',
     modelCacheHours: 24,         // 모델 목록을 다시 받아오는 주기
-    style: 'flat',               // flat | soft | photo | line
-    timeoutMs: 120000,
+
+    // full 모드에서 글자가 깨졌는지 이미지를 다시 읽어 확인한다.
+    // 한 번 더 호출하지만 글자 출력이라 값이 거의 안 든다.
+    // 깨졌으면 한 번 다시 그리고, 그래도 깨지면 HTML 썸네일로 물러선다.
+    verifyText: true,
+
+    style: 'flat',               // flat | soft | photo | line (overlay 모드용)
+    poster: 'bold',              // bold | clean | playful (full 모드용)
+    timeoutMs: 180000,
   },
 
   // 썸네일

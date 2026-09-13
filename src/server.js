@@ -14,7 +14,9 @@ import { checkClaude, runClaude } from './ai/claude.js';
 import { MODELS } from './ai/models.js';
 import { RULES } from './content/adsense.js';
 import { runResearch } from './content/research.js';
-import { generateBackground, pickAspectRatio, getImageModels } from './content/imagegen.js';
+import {
+  generateBackground, pickAspectRatio, getImageModels, verifyKoreanText,
+} from './content/imagegen.js';
 import { listExamples, addExample, removeExample, setExampleEnabled, MAX_EXAMPLE_CHARS } from './content/examples.js';
 import { prepareBrowser, closeRenderBrowser } from './lib/playwright.js';
 import * as runner from './queue/runner.js';
@@ -229,6 +231,8 @@ app.post('/api/image/test', wrap(async (req, res) => {
   if (apiKey) patch.image.apiKey = apiKey;
   if (model) patch.image.model = model;
   if (style) patch.image.style = style;
+  if (req.body?.mode) patch.image.mode = String(req.body.mode);
+  if (req.body?.poster) patch.image.poster = String(req.body.poster);
   if (Object.keys(patch.image).length) saveSettings(patch);
 
   const { width, height } = getSettings().thumbnail;
@@ -248,14 +252,29 @@ app.post('/api/image/test', wrap(async (req, res) => {
     }
   }
 
+  // 실제 글에서 오는 것과 같은 모양의 예시 문구로 뽑아야 품질을 판단할 수 있다.
+  const sample = {
+    posterLines: ['4년제만 답이 아니다', '취업 최강 전문대'],
+    ribbon: 'TOP 50 대공개 (2026 최신)',
+    subline: '실무, 자격증, 현장 경험으로 골랐습니다',
+    badge: '전문대',
+    keywords: ['간호보건', '반도체', '자동차', '항공', 'IT'],
+    headline: '취업 최강 전문대',
+    scene: 'students in a bright technical college workshop with machines, computers and lab benches',
+  };
+
   try {
-    const result = await generateBackground(
-      {
-        headline: '국가기술자격증 정리',
-        scene: 'an open notebook, a safety helmet and rolled blueprints on a clean wooden desk, soft morning light',
-      },
-      { aspectRatio: pickAspectRatio(width, height) },
-    );
+    const result = await generateBackground(sample, { aspectRatio: pickAspectRatio(width, height) });
+
+    // full 모드면 한글이 제대로 나왔는지도 함께 확인해서 보여준다.
+    let verdict = null;
+    if (getSettings().image.mode === 'full' && getSettings().image.verifyText) {
+      verdict = await verifyKoreanText(
+        result.dataUri,
+        [...sample.posterLines, sample.ribbon],
+      );
+    }
+
     logger.info(`이미지 생성 테스트 성공 — ${result.model}, ${Math.round(result.bytes / 1024)}KB`);
     res.json({
       ok: true,
@@ -263,6 +282,9 @@ app.post('/api/image/test', wrap(async (req, res) => {
       tier: result.tier || '',
       usd: result.usd,
       auto: !wanted,
+      mode: getSettings().image.mode,
+      textOk: verdict ? verdict.ok : null,
+      textReason: verdict?.reason || '',
       candidates: ranked.slice(0, 8),
       kb: Math.round(result.bytes / 1024),
       dataUri: result.dataUri,
