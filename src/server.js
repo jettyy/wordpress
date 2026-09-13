@@ -252,9 +252,15 @@ process.on('exit', (code) => {
   if (code !== 0) logRaw(`${new Date().toISOString()} [EXIT ] 종료 코드 ${code}`);
 });
 
-const server = app.listen(PORT, HOST, () => {
-  logger.info(`대시보드가 열렸습니다 → http://localhost:${PORT}`);
-  logger.info(`열리지 않으면 이 주소로 접속해 보세요 → http://127.0.0.1:${PORT}`);
+// 포트가 막혀 있을 때 그냥 죽어버리면, 쓰는 사람은 검은 창에 뜬 오류를 보고
+// 환경변수 지정하는 법부터 찾아야 한다. 그냥 옆 포트로 옮겨 열고 주소를 알려준다.
+const PORT_RETRIES = 10;
+
+let server = null;
+
+function onReady(port) {
+  logger.info(`대시보드가 열렸습니다 → http://localhost:${port}`);
+  logger.info(`열리지 않으면 이 주소로 접속해 보세요 → http://127.0.0.1:${port}`);
   logger.info(`이 창의 기록은 ${logFile()} 에도 남습니다.`);
   const { total, pending } = stats();
   logger.info(`저장된 주제 ${total}건 (대기 ${pending}건)`);
@@ -270,27 +276,48 @@ const server = app.listen(PORT, HOST, () => {
   } else {
     logger.info('워드프레스 연결 정보가 아직 없습니다. 대시보드 1번 칸에서 입력해 주세요.');
   }
-});
+}
 
-server.on('error', (error) => {
-  if (error.code === 'EADDRINUSE') {
-    logger.error(
-      `${PORT}번 포트를 이미 다른 프로그램이 쓰고 있습니다. `
-      + `열려 있는 다른 검은 창을 닫거나, PORT=3001 npm start 로 다른 포트를 쓰세요.`,
-    );
-  } else if (error.code === 'EACCES') {
-    logger.error(`${PORT}번 포트를 열 권한이 없습니다. PORT=3001 npm start 로 시도해 보세요.`);
-  } else {
-    fatal('서버를 열지 못했습니다', error);
-  }
-  process.exitCode = 1;
-});
+function listen(port, retriesLeft) {
+  const attempt = app.listen(port, HOST);
+  server = attempt;
+
+  attempt.once('listening', () => onReady(port));
+
+  attempt.on('error', (error) => {
+    // 여기서 잡지 않으면 "이미 쓰는 중" 오류가 그대로 튀어나가 프로세스가 죽는다.
+    const busy = error.code === 'EADDRINUSE' || error.code === 'EACCES';
+    if (busy && retriesLeft > 0) {
+      const reason = error.code === 'EADDRINUSE'
+        ? '이미 다른 프로그램이 쓰고 있습니다'
+        : '열 권한이 없습니다';
+      logger.warn(`${port}번 포트는 ${reason}. ${port + 1}번으로 다시 시도합니다.`);
+      attempt.close();
+      listen(port + 1, retriesLeft - 1);
+      return;
+    }
+
+    if (busy) {
+      logger.error(
+        `${PORT}번부터 ${port}번까지 모두 쓸 수 없어 대시보드를 열지 못했습니다. `
+        + '열려 있는 다른 검은 창을 닫고 다시 실행해 보세요. '
+        + '(원하는 포트를 직접 정하려면 윈도우는 $env:PORT=8080 그다음 npm start, '
+        + '맥·리눅스는 PORT=8080 npm start)',
+      );
+    } else {
+      fatal('서버를 열지 못했습니다', error);
+    }
+    process.exitCode = 1;
+  });
+}
+
+listen(PORT, PORT_RETRIES);
 
 async function shutdown() {
   logger.info('종료합니다...');
   runner.stop();
   await closeRenderBrowser().catch(() => {});
-  server.close(() => process.exit(0));
+  server?.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref();
 }
 
