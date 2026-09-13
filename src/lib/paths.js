@@ -15,6 +15,7 @@ export const LOG_DIR = path.join(DATA_DIR, 'logs');
 export const SETTINGS_FILE = path.join(DATA_DIR, 'settings.json');
 export const JOBS_FILE = path.join(DATA_DIR, 'jobs.json');
 export const SITE_FILE = path.join(DATA_DIR, 'wp-site.json');
+export const IMAGE_MODEL_FILE = path.join(DATA_DIR, 'image-models.json');
 
 export function ensureDirs() {
   for (const dir of [DATA_DIR, THUMB_DIR, OUTPUT_DIR, EXAMPLE_DIR, LOG_DIR]) {

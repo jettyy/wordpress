@@ -61,9 +61,11 @@ export const DEFAULT_SETTINGS = {
     enabled: false,              // 켜려면 API 키가 필요하다. 기본은 꺼짐.
     provider: 'google',          // 현재는 구글(Gemini API)만
     apiKey: '',                  // aistudio.google.com 에서 발급
-    // 구글이 이미지 모델을 자주 교체한다. (Imagen 4 의 :predict 는 2026-08-17 종료)
-    // 404 가 나면 여기를 현재 쓸 수 있는 모델로 바꾸면 된다.
-    model: 'gemini-3.1-flash-image',
+    // 비워두면 **자동**. 계정에서 쓸 수 있는 이미지 모델을 받아와
+    // 가장 싼 것을 고르고, 그 모델이 없어지면 다음으로 싼 것으로 넘어간다.
+    // 특정 모델을 고집하고 싶을 때만 이름을 적는다.
+    model: '',
+    modelCacheHours: 24,         // 모델 목록을 다시 받아오는 주기
     style: 'flat',               // flat | soft | photo | line
     timeoutMs: 120000,
   },

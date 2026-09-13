@@ -17,7 +17,9 @@ import { buildPostContent, buildPreviewHtml } from '../src/content/gutenberg.js'
 import { buildMarkdown } from '../src/content/markdown.js';
 import { DEFAULT_SETTINGS, saveSettings, getSettings, publicSettings } from '../src/lib/settings.js';
 import { detectShape } from '../src/content/ranking.js';
-import { buildImagePrompt, pickAspectRatio } from '../src/content/imagegen.js';
+import {
+  buildImagePrompt, pickAspectRatio, looksLikeImageModel, rankImageModels, priceOf,
+} from '../src/content/imagegen.js';
 import { renderTemplate } from '../src/content/templates/index.js';
 import { buildResearchBlock, isUsableUrl } from '../src/content/research.js';
 import { normalizeSiteUrl, normalizeSlug, parseTopics } from '../src/lib/util.js';
@@ -466,6 +468,64 @@ test('배경 그림이 있으면 글자를 얹는 전용 레이아웃으로 간�
   // 그림이 밝든 어둡든 흰 글씨가 읽히려면 가림막이 있어야 한다.
   assert.ok(withBg.includes('linear-gradient'), '가림막이 없습니다');
   assert.ok(withBg.includes('국가기술자격증 TOP 100'), '문구가 안 얹혔습니다');
+});
+
+test('이미지 생성 모델만 골라낸다', () => {
+  const model = (id, methods, description = '') => ({ id, methods, description });
+  // Gemini 계열은 generateContent 만 표시돼서 이름으로 봐야 한다.
+  assert.equal(looksLikeImageModel(model('gemini-3.1-flash-image', ['generateContent'])), true);
+  assert.equal(looksLikeImageModel(model('gemini-3.1-flash-lite-image', ['generateContent'])), true);
+  assert.equal(looksLikeImageModel(model('gemini-3-pro-image', ['generateContent'])), true);
+  // Imagen 계열은 predict 로 구분된다.
+  assert.equal(looksLikeImageModel(model('imagen-4.0-fast-generate-001', ['predict'])), true);
+  // 글만 쓰는 모델, 임베딩, 이미지를 "읽는" 모델은 빠져야 한다.
+  assert.equal(looksLikeImageModel(model('gemini-3-pro', ['generateContent'])), false);
+  assert.equal(looksLikeImageModel(model('text-embedding-004', ['embedContent'])), false);
+  assert.equal(looksLikeImageModel(model('gemini-pro-vision', ['generateContent'])), false);
+  assert.equal(looksLikeImageModel(model('gemini-2.5-flash-tts', ['generateContent'])), false);
+  // 설명에 이미지 생성이라고 적혀 있으면 그것도 본다.
+  assert.equal(
+    looksLikeImageModel(model('gemini-4-canvas', ['generateContent'], 'Generates images from text')),
+    true,
+  );
+});
+
+test('쓸 수 있는 모델을 싼 순서로 정렬한다', () => {
+  const ranked = rankImageModels([
+    { id: 'gemini-3-pro-image', methods: ['generateContent'] },
+    { id: 'gemini-3.1-flash-image', methods: ['generateContent'] },
+    { id: 'gemini-3.1-flash-lite-image', methods: ['generateContent'] },
+    { id: 'gemini-3-pro', methods: ['generateContent'] },          // 이미지 모델 아님
+    { id: 'text-embedding-004', methods: ['embedContent'] },       // 이미지 모델 아님
+  ]);
+  assert.deepEqual(
+    ranked.map((m) => m.id),
+    ['gemini-3.1-flash-lite-image', 'gemini-3.1-flash-image', 'gemini-3-pro-image'],
+    '싼 순서가 아닙니다',
+  );
+  assert.equal(ranked[0].tier, 'Flash Lite');
+  assert.ok(ranked[0].usd < ranked[2].usd, '가격이 오름차순이 아닙니다');
+});
+
+test('가격표에 없는 새 모델도 등급 이름으로 짐작한다', () => {
+  // 구글이 새 모델을 내놔도 프로그램이 멈추면 안 된다.
+  const lite = priceOf('gemini-9-flash-lite-image');
+  const pro = priceOf('gemini-9-pro-image');
+  assert.ok(lite.usd < pro.usd, 'lite 가 pro 보다 비싸게 잡혔습니다');
+
+  const unknown = priceOf('gemini-9-mystery-image');
+  assert.equal(unknown.known, false);
+  // 모르는 모델은 비싼 쪽으로 본다. 아는 모델을 우선 쓰게 하기 위해서다.
+  assert.ok(unknown.usd > priceOf('gemini-3.1-flash-image').usd, '모르는 모델이 먼저 골라집니다');
+});
+
+test('값이 같으면 가격을 아는 모델을 먼저 쓴다', () => {
+  const ranked = rankImageModels([
+    { id: 'gemini-9-fast-image', methods: ['generateContent'] },   // 추정 $0.03
+    { id: 'imagen-4.0-fast-generate-001', methods: ['predict'] },  // 확실 $0.02
+  ]);
+  assert.equal(ranked[0].id, 'imagen-4.0-fast-generate-001');
+  assert.equal(ranked[0].knownPrice, true);
 });
 
 test('API 키는 대시보드로 내려보내지 않는다', () => {

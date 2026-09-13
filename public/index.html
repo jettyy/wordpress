@@ -223,8 +223,10 @@
           <span class="sub" id="image-key-state">aistudio.google.com 에서 무료로 발급됩니다</span>
         </label>
         <label>이미지 모델
-          <input id="s-image-model" type="text" placeholder="gemini-3.1-flash-image">
-          <span class="sub">404가 나면 구글이 모델을 교체한 것입니다. 여기를 바꾸세요</span>
+          <input id="s-image-model" type="text" placeholder="자동 (가장 싼 모델을 고릅니다)">
+          <span class="sub">비워두면 계정에서 쓸 수 있는 모델을 받아와 가장 싼 것을 씁니다.
+            그 모델이 없어지면 다음으로 싼 것으로 알아서 넘어갑니다.
+            특정 모델만 쓰고 싶을 때만 이름을 적으세요</span>
         </label>
         <label>그림 분위기
           <select id="s-image-style">
@@ -235,7 +237,10 @@
           </select>
         </label>
         <label class="wide">
-          <button class="btn" id="btn-test-image" type="button">이미지 API 테스트 (한 장 뽑아보기)</button>
+          <span class="row">
+            <button class="btn" id="btn-test-image" type="button">이미지 API 테스트 (한 장 뽑아보기)</button>
+            <button class="btn ghost" id="btn-refresh-models" type="button">모델 목록 새로 받기</button>
+          </span>
         </label>
       </div>
       <div id="image-test-result" class="test-result hidden"></div>

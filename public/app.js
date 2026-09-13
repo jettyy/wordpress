@@ -308,6 +308,7 @@ function renderSettings() {
   $('s-thumb-emoji').checked = Boolean(s.thumbnail.emoji);
 
   $('s-image').checked = Boolean(s.image.enabled);
+  // 비어 있으면 자동. placeholder 가 그렇게 안내한다.
   $('s-image-model').value = s.image.model || '';
   $('s-image-style').value = s.image.style || 'flat';
   $('image-key-state').textContent = s.image.apiKeySet
@@ -710,14 +711,29 @@ $('s-image-key').addEventListener('change', async () => {
   toast('이미지 API 키를 저장했습니다.');
 });
 
-$('btn-test-image').onclick = async () => {
+/** 자동으로 고른 후보 목록을 보기 좋게. 고른 것에 화살표를 붙인다. */
+function candidateLines(candidates, picked) {
+  if (!candidates?.length) return '';
+  const lines = candidates.map((model) => {
+    const mark = model.id === picked ? '→ ' : '   ';
+    const price = model.knownPrice ? `$${model.usd}` : `$${model.usd} (추정)`;
+    return `${mark}${model.id}  ${price}  ${model.tier}`;
+  });
+  return `\n\n쓸 수 있는 모델 (싼 순서):\n${lines.join('\n')}`;
+}
+
+async function runImageTest({ refresh = false } = {}) {
   const box = $('image-test-result');
   const preview = $('image-test-preview');
   const button = $('btn-test-image');
+  const refreshButton = $('btn-refresh-models');
   button.disabled = true;
+  refreshButton.disabled = true;
   preview.classList.add('hidden');
   box.classList.remove('hidden', 'bad', 'good');
-  box.textContent = '그림 한 장을 뽑는 중... (최대 2분)';
+  box.textContent = refresh
+    ? '모델 목록을 다시 받고 그림 한 장을 뽑는 중... (최대 2분)'
+    : '그림 한 장을 뽑는 중... (최대 2분)';
   try {
     const data = await api('/api/image/test', {
       method: 'POST',
@@ -725,6 +741,7 @@ $('btn-test-image').onclick = async () => {
         apiKey: $('s-image-key').value.trim(),
         model: $('s-image-model').value.trim(),
         style: $('s-image-style').value,
+        refresh,
       },
     });
     state.settings = data.settings || state.settings;
@@ -732,11 +749,15 @@ $('btn-test-image').onclick = async () => {
     renderSettings();
     if (data.failed) {
       box.classList.add('bad');
-      box.textContent = `실패: ${data.message}`;
+      box.textContent = `실패: ${data.message}${candidateLines(data.candidates, '')}`;
     } else {
       box.classList.add('good');
-      box.textContent = `성공 — ${data.model}, ${data.kb}KB\n`
-        + '이 그림 위에 한글 문구가 얹힙니다. 그림 자체에는 글자가 없어야 정상입니다.';
+      const price = data.usd ? ` · 장당 약 $${data.usd}` : '';
+      box.textContent =
+        `성공 — ${data.model}${data.tier ? ` (${data.tier})` : ''}${price} · ${data.kb}KB\n`
+        + (data.auto ? '자동으로 가장 싼 모델을 골랐습니다.\n' : '설정에 적은 모델을 썼습니다.\n')
+        + '이 그림 위에 한글 문구가 얹힙니다. 그림 자체에는 글자가 없어야 정상입니다.'
+        + candidateLines(data.candidates, data.model);
       preview.src = data.dataUri;
       preview.classList.remove('hidden');
     }
@@ -745,8 +766,12 @@ $('btn-test-image').onclick = async () => {
     box.textContent = `실패: ${error.message}`;
   } finally {
     button.disabled = false;
+    refreshButton.disabled = false;
   }
-};
+}
+
+$('btn-test-image').onclick = () => runImageTest();
+$('btn-refresh-models').onclick = () => runImageTest({ refresh: true });
 
 $('btn-preview-thumb').onclick = () => {
   const params = new URLSearchParams({

@@ -14,7 +14,7 @@ import { checkClaude, runClaude } from './ai/claude.js';
 import { MODELS } from './ai/models.js';
 import { RULES } from './content/adsense.js';
 import { runResearch } from './content/research.js';
-import { generateBackground, pickAspectRatio } from './content/imagegen.js';
+import { generateBackground, pickAspectRatio, getImageModels } from './content/imagegen.js';
 import { listExamples, addExample, removeExample, setExampleEnabled, MAX_EXAMPLE_CHARS } from './content/examples.js';
 import { prepareBrowser, closeRenderBrowser } from './lib/playwright.js';
 import * as runner from './queue/runner.js';
@@ -232,7 +232,22 @@ app.post('/api/image/test', wrap(async (req, res) => {
   if (Object.keys(patch.image).length) saveSettings(patch);
 
   const { width, height } = getSettings().thumbnail;
-  logger.step(`이미지 생성 테스트 시작 (${getSettings().image.model})`);
+  const wanted = getSettings().image.model;
+  logger.step(`이미지 생성 테스트 시작 (${wanted || '자동 - 가장 싼 모델'})`);
+
+  // 자동 모드면 어떤 후보들이 있는지도 함께 보여준다. 무엇이 골라졌는지
+  // 눈으로 확인할 수 있어야 "왜 이 모델이지?" 를 묻지 않아도 된다.
+  let ranked = [];
+  if (!wanted) {
+    try {
+      ranked = (await getImageModels({ force: Boolean(req.body?.refresh) })).models;
+    } catch (error) {
+      logger.error(`이미지 모델 목록을 받지 못했습니다: ${error.message}`);
+      res.json({ ok: true, failed: true, message: error.message, settings: publicSettings() });
+      return;
+    }
+  }
+
   try {
     const result = await generateBackground(
       {
@@ -245,13 +260,20 @@ app.post('/api/image/test', wrap(async (req, res) => {
     res.json({
       ok: true,
       model: result.model,
+      tier: result.tier || '',
+      usd: result.usd,
+      auto: !wanted,
+      candidates: ranked.slice(0, 8),
       kb: Math.round(result.bytes / 1024),
       dataUri: result.dataUri,
       settings: publicSettings(),
     });
   } catch (error) {
     logger.error(`이미지 생성 테스트 실패: ${error.message}`);
-    res.json({ ok: true, failed: true, message: error.message, settings: publicSettings() });
+    res.json({
+      ok: true, failed: true, message: error.message,
+      candidates: ranked.slice(0, 8), settings: publicSettings(),
+    });
   }
 }));
 
