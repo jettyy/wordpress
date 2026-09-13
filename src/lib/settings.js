@@ -53,10 +53,7 @@ export const DEFAULT_SETTINGS = {
     blockOnFail: false,          // 끝내 못 고치면 저장하지 않고 실패로 둘지
   },
 
-  // 썸네일 배경 그림 (이미지 생성 API)
-  //
-  // 그림에는 글자를 넣지 않는다. 한글은 HTML 템플릿이 그 위에 얹는다.
-  // 그래서 가장 싼 모델을 써도 글자가 깨지지 않는다.
+  // 썸네일 이미지 생성 API
   image: {
     enabled: false,              // 켜려면 API 키가 필요하다. 기본은 꺼짐.
     provider: 'google',          // 현재는 구글(Gemini API)만
@@ -66,9 +63,7 @@ export const DEFAULT_SETTINGS = {
     // overlay — 글자 없는 배경만 API 가 그리고 한글은 HTML 이 얹는다 (싸고 안전)
     mode: 'full',
 
-    // 비워두면 **자동**. 계정에서 쓸 수 있는 이미지 모델을 받아와 고른다.
-    // full 모드에서는 한글을 잘 그리는 모델을 먼저,
-    // overlay 모드에서는 가장 싼 모델을 먼저 고른다.
+    // 비워두면 **자동**. 계정에서 쓸 수 있는 이미지 모델 중 언제나 가장 싼 것부터 쓴다.
     model: '',
     modelCacheHours: 24,         // 모델 목록을 다시 받아오는 주기
 
@@ -97,6 +92,10 @@ export const DEFAULT_SETTINGS = {
     delayMinSec: 20,
     delayMaxSec: 60,
     maxRetries: 1,
+    // 연속으로 이만큼 실패하면 실행을 멈춘다. 0 이면 **멈추지 않고 끝까지** 간다.
+    // 기본은 0 이다. 한두 주제가 안 된다고 나머지를 세워두는 것보다,
+    // 끝까지 돌려놓고 실패한 것만 다시 보는 편이 낫다.
+    stopAfterFailures: 0,
     chromiumPath: '',            // 썸네일 렌더링에 쓸 크로미움 경로 (비우면 자동)
   },
 };

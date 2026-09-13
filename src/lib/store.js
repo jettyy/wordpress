@@ -73,6 +73,7 @@ export function addTopics(topics) {
       topic,
       status: STATUS.PENDING,
       message: '',
+      detail: '',            // 오류 전문 (표에는 줄여서 띄우고 여기에 원문을 담는다)
       attempts: 0,
       title: '',
       thumbnailPath: '',
@@ -124,7 +125,7 @@ export function clearJobs(onlyFinished = false) {
 }
 
 export function resetJob(id) {
-  return updateJob(id, { status: STATUS.PENDING, message: '', attempts: 0 });
+  return updateJob(id, { status: STATUS.PENDING, message: '', detail: '', attempts: 0 });
 }
 
 export function nextPending() {
@@ -139,6 +140,7 @@ export function stats() {
     pending: by(STATUS.PENDING),
     done: by(STATUS.DONE),
     failed: by(STATUS.FAILED),
+    skipped: by(STATUS.SKIPPED),
     running: list.filter((job) => RUNNING_STATUSES.includes(job.status)).length,
   };
 }

@@ -184,7 +184,15 @@ async function processJob(job) {
 }
 
 // 같은 이유로 계속 실패할 때 남은 주제를 전부 태우지 않도록 하는 한계선.
-const STOP_AFTER_FAILURES = 3;
+/**
+ * 실패 메시지가 길면 작업표가 글로 뒤덮인다.
+ * (AI 가 주제를 거절하면 이유를 몇 문단씩 적어 보낸다)
+ * 표에는 짧게 띄우고 전체 내용은 따로 담아 마우스를 올렸을 때 보이게 한다.
+ */
+function shorten(message, max = 160) {
+  const text = String(message).replace(/\s+/g, ' ').trim();
+  return text.length > max ? `${text.slice(0, max)}...` : text;
+}
 
 async function loop() {
   let processed = 0;
@@ -217,23 +225,46 @@ async function loop() {
         continue;
       }
 
+      // AI 가 "이 주제로는 못 쓰겠다" 고 거절한 경우다.
+      // 같은 주제로 다시 물어봐야 같은 대답이 온다. 재시도는 호출만 버리는 짓이고,
+      // 설정이 잘못된 것도 아니니 연속 실패로 세지도 않는다. 바로 다음 주제로 간다.
+      if (error.refusal) {
+        updateJob(job.id, {
+          status: STATUS.SKIPPED,
+          message: `AI가 이 주제를 거절했습니다: ${shorten(error.reason || message)}`,
+          detail: String(error.reason || message),
+        });
+        logger.warn(
+          `[${job.topic}] AI가 이 주제를 거절해 건너뜁니다. ${shorten(error.reason || message, 200)}`,
+          { jobId: job.id },
+        );
+        continue;
+      }
+
       consecutiveFailures += 1;
       const canRetry = job.attempts <= getSettings().run.maxRetries;
       if (canRetry && state.running) {
-        updateJob(job.id, { status: STATUS.PENDING, message: `실패, 재시도 예정: ${message}` });
-        logger.warn(`[${job.topic}] 실패 - 재시도합니다. ${message}`, { jobId: job.id });
+        updateJob(job.id, {
+          status: STATUS.PENDING,
+          message: `실패, 재시도 예정: ${shorten(message)}`,
+          detail: message,
+        });
+        logger.warn(`[${job.topic}] 실패 - 재시도합니다. ${shorten(message, 200)}`, { jobId: job.id });
         await sleep(5000);
       } else {
-        updateJob(job.id, { status: STATUS.FAILED, message });
-        logger.error(`[${job.topic}] 실패: ${message}`, { jobId: job.id });
+        updateJob(job.id, { status: STATUS.FAILED, message: shorten(message), detail: message });
+        logger.error(`[${job.topic}] 실패: ${shorten(message, 200)}`, { jobId: job.id });
       }
 
       // 설정이 잘못됐거나 연결이 끊긴 상태라면 남은 주제도 전부 같은 이유로 실패한다.
-      // 100건을 몇 초 만에 실패로 태우는 대신 멈춰서 알린다.
-      if (consecutiveFailures >= STOP_AFTER_FAILURES) {
+      // 그래도 기본값은 "멈추지 않고 계속" 이다. 한두 주제가 안 된다고 나머지
+      // 아흔 몇 건을 세워두는 것보다, 끝까지 돌려놓고 실패한 것만 다시 보는 편이 낫다.
+      // 설정에서 0 이 아닌 값을 주면 그 횟수만큼 연속 실패했을 때 멈춘다.
+      const stopAfter = Number(getSettings().run.stopAfterFailures) || 0;
+      if (stopAfter > 0 && consecutiveFailures >= stopAfter) {
         logger.error(
-          `연속 ${consecutiveFailures}건이 같은 이유로 실패해 실행을 멈춥니다. `
-          + `마지막 오류: ${message}`,
+          `연속 ${consecutiveFailures}건이 실패해 실행을 멈춥니다. `
+          + `마지막 오류: ${shorten(message, 200)}`,
         );
         state.running = false;
       }

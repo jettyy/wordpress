@@ -232,7 +232,7 @@ function renderJobs() {
         <td>${index + 1}</td>
         <td class="topic">${escapeHtml(job.topic)}</td>
         <td><span class="badge ${job.status}">${label}</span></td>
-        <td class="msg">${job.title ? `<b>${escapeHtml(job.title)}</b>` : ''}${escapeHtml(job.message || '')}
+        <td class="msg"${job.detail ? ` title="${escapeHtml(job.detail)}"` : ''}>${job.title ? `<b>${escapeHtml(job.title)}</b>` : ''}${escapeHtml(job.message || '')}
           <div class="msg-links">${note} ${warn} ${links.join(' ')}</div></td>
         <td>${job.charCount ? job.charCount.toLocaleString() : '-'}</td>
         <td>${complianceCell(job)}</td>
@@ -252,11 +252,13 @@ function renderJobs() {
 function renderRunner() {
   const runner = state.runner;
   if (!runner) return;
-  const { total, done, failed, pending } = runner.stats;
-  const finished = done + failed;
+  const { total, done, failed, skipped = 0, pending } = runner.stats;
+  // 건너뛴 주제도 더 이상 처리되지 않는다. 진행률에 넣어야 막대가 끝까지 찬다.
+  const finished = done + failed + skipped;
   $('progress-bar').style.width = total ? `${Math.round((finished / total) * 100)}%` : '0%';
 
-  let text = `전체 ${total} · 완료 ${done} · 실패 ${failed} · 대기 ${pending}`;
+  let text = `전체 ${total} · 완료 ${done} · 실패 ${failed}`
+    + `${skipped ? ` · 건너뜀 ${skipped}` : ''} · 대기 ${pending}`;
   if (runner.running) text += runner.paused ? ' · 일시정지' : ' · 실행 중';
   if (runner.waitUntil) {
     const left = Math.max(0, Math.round((runner.waitUntil - Date.now()) / 1000));
@@ -321,6 +323,7 @@ function renderSettings() {
   $('s-delay-min').value = s.run.delayMinSec;
   $('s-delay-max').value = s.run.delayMaxSec;
   $('s-retries').value = s.run.maxRetries;
+  $('s-stop-after').value = s.run.stopAfterFailures;
 
   renderModels();
   renderModelPill();
@@ -445,6 +448,7 @@ function collectSettings() {
       delayMinSec: Number($('s-delay-min').value),
       delayMaxSec: Number($('s-delay-max').value),
       maxRetries: Number($('s-retries').value),
+      stopAfterFailures: Number($('s-stop-after').value),
     },
   };
 }
