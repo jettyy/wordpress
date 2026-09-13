@@ -15,8 +15,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { checkCompliance, countChars, buildRuleBlock } from '../src/content/adsense.js';
 import { buildPostContent, buildPreviewHtml } from '../src/content/gutenberg.js';
 import { buildMarkdown } from '../src/content/markdown.js';
-import { DEFAULT_SETTINGS } from '../src/lib/settings.js';
+import { DEFAULT_SETTINGS, saveSettings, getSettings, publicSettings } from '../src/lib/settings.js';
 import { detectShape } from '../src/content/ranking.js';
+import { buildImagePrompt, pickAspectRatio } from '../src/content/imagegen.js';
+import { renderTemplate } from '../src/content/templates/index.js';
 import { buildResearchBlock, isUsableUrl } from '../src/content/research.js';
 import { normalizeSiteUrl, normalizeSlug, parseTopics } from '../src/lib/util.js';
 
@@ -409,6 +411,73 @@ test('주제 문자열에서 글의 모양을 알아낸다', () => {
   assert.equal(detectShape('유튜브 구독자 TOP100 순위').shape, 'table');
   assert.equal(detectShape('유튜브 구독자 TOP100 순위').needsChunking, true);
   assert.equal(detectShape('전세 계약 전 확인할 서류').shape, 'general');
+});
+
+test('개수를 안 쓴 순위 주제는 목표 개수만큼 크게 뽑는다', () => {
+  // 예전에는 항목 5개짜리 글로 잡혀서 "많이 담긴 순위표" 가 안 나왔다.
+  const big = detectShape('전국 대학교 순위', 100);
+  assert.equal(big.shape, 'table', '큰 표로 안 잡혔습니다');
+  assert.equal(big.count, 100);
+  assert.equal(big.needsChunking, true);
+
+  assert.equal(detectShape('수도권 대학 서열', 150).count, 150, '설정값을 안 따랐습니다');
+  // 주제에 숫자가 있으면 설정값보다 주제의 숫자가 우선이다.
+  assert.equal(detectShape('대학 순위 TOP 30', 100).count, 30, '주제의 숫자를 무시했습니다');
+  // "추천/비교" 는 항목 몇 개를 깊게 다루는 글이다. 100행 표로 가면 안 된다.
+  assert.equal(detectShape('겨울 캠핑 장비 추천', 100).shape, 'items');
+  assert.equal(detectShape('겨울 캠핑 장비 추천', 100).count, null);
+  // 순위와 무관한 주제는 그대로 정보 정리형.
+  assert.equal(detectShape('전세 계약 전 확인할 서류', 100).shape, 'general');
+});
+
+console.log('\n[6] 썸네일 배경 그림');
+
+test('썸네일 비율에 가장 가까운 허용 비율을 고른다', () => {
+  assert.equal(pickAspectRatio(1200, 630), '16:9');
+  assert.equal(pickAspectRatio(1080, 1080), '1:1');
+  assert.equal(pickAspectRatio(1080, 1920), '9:16');
+  assert.equal(pickAspectRatio(0, 0), '16:9', '잘못된 값에도 기본값이 나와야 합니다');
+});
+
+test('그림 프롬프트가 글자를 넣지 말라고 여러 번 못박는다', () => {
+  const prompt = buildImagePrompt(
+    { scene: 'a safety helmet on a desk', headline: '자격증 정리' },
+    'flat',
+  );
+  assert.ok(prompt.includes('a safety helmet on a desk'), '장면 설명이 안 들어갔습니다');
+  for (const ban of ['no text', 'no letters', 'no words', 'no watermark']) {
+    assert.ok(prompt.includes(ban), `"${ban}" 금지 문구가 없습니다`);
+  }
+  // scene 이 비어도 제목으로 프롬프트를 만들 수 있어야 한다.
+  assert.ok(buildImagePrompt({ headline: '겨울 캠핑' }, 'flat').includes('no text'));
+});
+
+test('배경 그림이 있으면 글자를 얹는 전용 레이아웃으로 간다', () => {
+  const spec = {
+    headline: '국가기술자격증 TOP 100', subline: '전국을 다 묶었습니다', badge: '자격증',
+    emoji: '', accent: '#16324F', width: 1200, height: 630,
+  };
+  const plain = renderTemplate({ ...spec, style: 'minimal' });
+  assert.ok(!plain.includes('<img src='), '배경이 없는데 이미지가 들어갔습니다');
+
+  const withBg = renderTemplate({ ...spec, style: 'minimal', background: 'data:image/png;base64,AAA' });
+  assert.ok(withBg.includes('<img src="data:image/png;base64,AAA"'), '배경 그림이 안 들어갔습니다');
+  assert.ok(withBg.includes('object-fit:cover'), '배경이 꽉 차게 깔리지 않았습니다');
+  // 그림이 밝든 어둡든 흰 글씨가 읽히려면 가림막이 있어야 한다.
+  assert.ok(withBg.includes('linear-gradient'), '가림막이 없습니다');
+  assert.ok(withBg.includes('국가기술자격증 TOP 100'), '문구가 안 얹혔습니다');
+});
+
+test('API 키는 대시보드로 내려보내지 않는다', () => {
+  const saved = saveSettings({ image: { apiKey: 'AIzaSECRETKEY' } });
+  assert.equal(saved.image.apiKey, 'AIzaSECRETKEY', '설정에는 저장되어야 합니다');
+  const shown = publicSettings();
+  assert.equal(shown.image.apiKey, '', 'API 키가 화면으로 새어나갔습니다');
+  assert.equal(shown.image.apiKeySet, true, '키가 있다는 표시가 없습니다');
+  // 화면의 마스킹 값이 되돌아와도 진짜 키를 덮어쓰면 안 된다.
+  saveSettings({ image: { apiKey: '●●●●●●' } });
+  assert.equal(getSettings().image.apiKey, 'AIzaSECRETKEY', '마스킹 값이 키를 덮어썼습니다');
+  saveSettings({ image: { apiKey: '' } });
 });
 
 test('사이트 주소의 꼬리를 떼어낸다', () => {

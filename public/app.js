@@ -284,6 +284,7 @@ function renderSettings() {
 
   $('s-min-chars').value = s.post.minChars;
   $('s-sections').value = s.post.sectionCount;
+  $('s-rank-count').value = s.post.rankTargetCount;
   $('s-repairs').value = s.adsense.maxRepairs;
   $('s-enforce').checked = Boolean(s.adsense.enforce);
   $('s-block').checked = Boolean(s.adsense.blockOnFail);
@@ -305,6 +306,13 @@ function renderSettings() {
   $('s-thumb-insert').checked = Boolean(s.thumbnail.insert);
   $('s-thumb-featured').checked = Boolean(s.thumbnail.featured);
   $('s-thumb-emoji').checked = Boolean(s.thumbnail.emoji);
+
+  $('s-image').checked = Boolean(s.image.enabled);
+  $('s-image-model').value = s.image.model || '';
+  $('s-image-style').value = s.image.style || 'flat';
+  $('image-key-state').textContent = s.image.apiKeySet
+    ? '저장된 키가 있습니다. 바꿀 때만 새로 입력하세요.'
+    : 'aistudio.google.com 에서 무료로 발급됩니다';
 
   $('s-delay-min').value = s.run.delayMinSec;
   $('s-delay-max').value = s.run.delayMaxSec;
@@ -420,6 +428,11 @@ function collectSettings() {
       insert: $('s-thumb-insert').checked,
       featured: $('s-thumb-featured').checked,
       emoji: $('s-thumb-emoji').checked,
+    },
+    image: {
+      enabled: $('s-image').checked,
+      model: $('s-image-model').value.trim(),
+      style: $('s-image-style').value,
     },
     run: {
       delayMinSec: Number($('s-delay-min').value),
@@ -540,12 +553,13 @@ $('s-guideline').addEventListener('input', () => saveGuideline());
 $('s-guideline').addEventListener('blur', () => saveGuideline(true));
 
 /* 준수 규칙 칸의 입력은 바로 저장한다. */
-for (const id of ['s-min-chars', 's-sections', 's-repairs', 's-enforce', 's-block', 's-criteria', 's-faq']) {
+for (const id of ['s-min-chars', 's-sections', 's-rank-count', 's-repairs', 's-enforce', 's-block', 's-criteria', 's-faq']) {
   $(id).addEventListener('change', async () => {
     await patchSettings({
       post: {
         minChars: Number($('s-min-chars').value),
         sectionCount: Number($('s-sections').value),
+        rankTargetCount: Number($('s-rank-count').value),
         addCriteria: $('s-criteria').checked,
         addFaq: $('s-faq').checked,
       },
@@ -660,6 +674,71 @@ $('btn-test-ai').onclick = async () => {
       box.textContent =
         `성공 — 모델 ${shortModel(data.model)} (${data.model})\n` +
         `응답: ${data.answer} · ${Math.round((data.durationMs || 0) / 100) / 10}초`;
+    }
+  } catch (error) {
+    box.classList.add('bad');
+    box.textContent = `실패: ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+};
+
+/* ---------- 썸네일 배경 그림 ---------- */
+
+for (const id of ['s-image', 's-image-model', 's-image-style']) {
+  $(id).addEventListener('change', async () => {
+    await patchSettings({
+      image: {
+        enabled: $('s-image').checked,
+        model: $('s-image-model').value.trim(),
+        style: $('s-image-style').value,
+      },
+    });
+    toast($('s-image').checked
+      ? '배경 그림 생성을 켰습니다. 키가 없으면 기존 썸네일로 만듭니다.'
+      : '배경 그림 생성을 껐습니다.');
+  });
+}
+
+// 키는 입력하는 즉시 저장하지 않는다. 테스트 버튼으로 확인하면서 같이 저장한다.
+$('s-image-key').addEventListener('change', async () => {
+  const apiKey = $('s-image-key').value.trim();
+  if (!apiKey) return;
+  await patchSettings({ image: { apiKey } });
+  $('s-image-key').value = '';
+  $('image-key-state').textContent = '저장된 키가 있습니다. 바꿀 때만 새로 입력하세요.';
+  toast('이미지 API 키를 저장했습니다.');
+});
+
+$('btn-test-image').onclick = async () => {
+  const box = $('image-test-result');
+  const preview = $('image-test-preview');
+  const button = $('btn-test-image');
+  button.disabled = true;
+  preview.classList.add('hidden');
+  box.classList.remove('hidden', 'bad', 'good');
+  box.textContent = '그림 한 장을 뽑는 중... (최대 2분)';
+  try {
+    const data = await api('/api/image/test', {
+      method: 'POST',
+      body: {
+        apiKey: $('s-image-key').value.trim(),
+        model: $('s-image-model').value.trim(),
+        style: $('s-image-style').value,
+      },
+    });
+    state.settings = data.settings || state.settings;
+    $('s-image-key').value = '';
+    renderSettings();
+    if (data.failed) {
+      box.classList.add('bad');
+      box.textContent = `실패: ${data.message}`;
+    } else {
+      box.classList.add('good');
+      box.textContent = `성공 — ${data.model}, ${data.kb}KB\n`
+        + '이 그림 위에 한글 문구가 얹힙니다. 그림 자체에는 글자가 없어야 정상입니다.';
+      preview.src = data.dataUri;
+      preview.classList.remove('hidden');
     }
   } catch (error) {
     box.classList.add('bad');

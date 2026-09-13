@@ -6,20 +6,28 @@ import { getSettings } from '../lib/settings.js';
 import { THUMB_DIR, ensureDirs } from '../lib/paths.js';
 import { slugify } from '../lib/util.js';
 import { logger } from '../lib/events.js';
+import { maybeGenerateBackground } from './imagegen.js';
 
 /**
  * AI 가 설계한 문구/색상을 HTML 템플릿에 얹고 스크린샷으로 PNG를 만든다.
  * 이미지 생성 API를 쓰지 않으므로 추가 비용이 없다.
  */
-export async function renderThumbnail(post, { jobId = '' } = {}) {
+export async function renderThumbnail(post, { jobId = '', signal } = {}) {
   ensureDirs();
   const settings = getSettings();
   const { width, height } = settings.thumbnail;
+
+  // 배경 그림은 이미지 API 가 그리고(글자 없이), 한글 문구는 아래에서 브라우저가 얹는다.
+  // 꺼져 있거나 실패하면 null 이 오고, 기존 단색 썸네일로 그대로 진행한다.
+  const background = await maybeGenerateBackground(post.thumbnail, {
+    signal, width, height, jobId,
+  });
 
   const spec = {
     ...post.thumbnail,
     // 애드센스 글은 기호를 자제하는 편이 안전하다. 설정에서 켤 때만 넣는다.
     emoji: settings.thumbnail.emoji ? post.thumbnail.emoji : '',
+    background: background?.dataUri || '',
     width,
     height,
   };
@@ -49,8 +57,9 @@ export async function renderThumbnail(post, { jobId = '' } = {}) {
     await page.screenshot({ path: filePath, type: 'png' });
 
     const size = fs.statSync(filePath).size;
-    logger.info(`썸네일 생성 완료 (${spec.style}, ${Math.round(size / 1024)}KB)`, { jobId });
-    return { filePath, fileName, style: spec.style };
+    const layout = spec.background ? '배경 그림 + 문구' : spec.style;
+    logger.info(`썸네일 생성 완료 (${layout}, ${Math.round(size / 1024)}KB)`, { jobId });
+    return { filePath, fileName, style: spec.style, generated: Boolean(spec.background) };
   } finally {
     await context.close().catch(() => {});
   }

@@ -105,9 +105,46 @@ function editorial({ headline, subline, badge, emoji, accent, width, height }) {
   </div>`);
 }
 
-export const TEMPLATES = { bold, gradient, minimal, editorial };
+/**
+ * 배경 그림 위에 한글을 얹는 레이아웃.
+ *
+ * 이미지 생성 모델은 한글을 자주 뭉갠다. 그래서 그림에는 글자를 넣지 않게 하고,
+ * 문구는 여기서 브라우저가 그린다. 그러면 글자가 절대 깨지지 않는다.
+ *
+ * 배경이 밝을지 어두울지 알 수 없으므로, 왼쪽에서 오른쪽으로 어두워지는
+ * 가림막(scrim)을 깔고 그 위에 흰 글씨를 올린다. 어떤 그림이 와도 읽힌다.
+ */
+function illustrated({ headline, subline, badge, emoji, accent, background, width, height }) {
+  const pad = height * 0.095;
+  return shell(width, height, `
+  <div class="card" style="background:${accent}; flex-direction:column; justify-content:flex-end; padding:${pad}px;">
+    <img src="${background}" alt=""
+         style="position:absolute; inset:0; width:100%; height:100%; object-fit:cover;">
+    <div style="position:absolute; inset:0; background:
+         linear-gradient(100deg, rgba(8,12,18,0.86) 0%, rgba(8,12,18,0.70) 46%, rgba(8,12,18,0.08) 100%);"></div>
+    <div style="position:absolute; left:0; top:${pad}px; bottom:${pad}px;
+                width:${Math.max(4, height * 0.012)}px; background:${shade(accent, 70)};"></div>
+    <div style="position:relative; max-width:78%;">
+      ${badge ? `<div class="badge" style="background:rgba(255,255,255,0.94); color:#14171a; margin-bottom:${height * 0.042}px;">${escapeHtml(badge)}</div>` : ''}
+      <div class="headline" style="font-size:${height * 0.132}px; line-height:1.24; color:#fff;
+           text-shadow:0 2px 20px rgba(0,0,0,0.45);">
+        ${emoji ? `<span style="margin-right:0.2em;">${escapeHtml(emoji)}</span>` : ''}${escapeHtml(headline)}
+      </div>
+      ${subline ? `<div class="subline" style="margin-top:${height * 0.04}px; font-size:${height * 0.05}px;
+           line-height:1.6; color:rgba(255,255,255,0.93); text-shadow:0 1px 12px rgba(0,0,0,0.5);">${escapeHtml(subline)}</div>` : ''}
+    </div>
+  </div>`);
+}
 
+export const TEMPLATES = { bold, gradient, minimal, editorial, illustrated };
+
+/**
+ * 배경 그림이 있으면 illustrated 레이아웃으로 간다.
+ * minimal(흰 배경)이나 editorial(2단 분할)에 그림을 억지로 끼우면
+ * 문구가 그림에 묻히거나 잘린다. 아예 전용 레이아웃을 쓰는 편이 안전하다.
+ */
 export function renderTemplate(spec) {
+  if (spec.background) return illustrated(spec);
   const build = TEMPLATES[spec.style] || TEMPLATES.bold;
   return build(spec);
 }

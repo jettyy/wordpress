@@ -26,6 +26,9 @@ export const DEFAULT_SETTINGS = {
     sectionCount: 4,             // H2 소제목 개수 (규칙: 3~4개)
     audience: '해당 주제의 정보를 처음 찾아보는 일반 독자',
     extraGuideline: '',
+    // "전국 대학 순위" 처럼 개수를 안 쓴 순위 주제에 쓸 목표 행 수.
+    // 개수를 쓴 주제(TOP 50)는 그 숫자를 그대로 따른다.
+    rankTargetCount: 100,
     addCriteria: true,           // 서두에 '선정 기준' 밝히기 (필수 규칙)
     addFaq: true,                // 마지막에 자주 묻는 질문 (정보성 강화)
     moreTag: true,               // 도입부 뒤에 <!--more--> (목록에 요약만 노출)
@@ -50,6 +53,21 @@ export const DEFAULT_SETTINGS = {
     blockOnFail: false,          // 끝내 못 고치면 저장하지 않고 실패로 둘지
   },
 
+  // 썸네일 배경 그림 (이미지 생성 API)
+  //
+  // 그림에는 글자를 넣지 않는다. 한글은 HTML 템플릿이 그 위에 얹는다.
+  // 그래서 가장 싼 모델을 써도 글자가 깨지지 않는다.
+  image: {
+    enabled: false,              // 켜려면 API 키가 필요하다. 기본은 꺼짐.
+    provider: 'google',          // 현재는 구글(Gemini API)만
+    apiKey: '',                  // aistudio.google.com 에서 발급
+    // 구글이 이미지 모델을 자주 교체한다. (Imagen 4 의 :predict 는 2026-08-17 종료)
+    // 404 가 나면 여기를 현재 쓸 수 있는 모델로 바꾸면 된다.
+    model: 'gemini-3.1-flash-image',
+    style: 'flat',               // flat | soft | photo | line
+    timeoutMs: 120000,
+  },
+
   // 썸네일
   thumbnail: {
     width: 1200,
@@ -70,7 +88,7 @@ export const DEFAULT_SETTINGS = {
 };
 
 /** 대시보드로 내보내면 안 되는 값. 화면에는 채워졌는지만 알려준다. */
-const SECRET_PATHS = [['site', 'appPassword']];
+const SECRET_PATHS = [['site', 'appPassword'], ['image', 'apiKey']];
 
 function deepMerge(base, patch) {
   if (patch === null || patch === undefined) return base;
@@ -119,10 +137,13 @@ export function saveSettings(patch) {
   return next;
 }
 
-/** 브라우저로 내려보낼 설정. 비밀번호는 값을 빼고 "채워짐" 여부만 남긴다. */
+/** 브라우저로 내려보낼 설정. 비밀번호와 API 키는 값을 빼고 "채워짐" 여부만 남긴다. */
 export function publicSettings() {
-  const settings = structuredClone(getSettings());
-  settings.site.appPasswordSet = Boolean(getSettings().site.appPassword);
+  const stored = getSettings();
+  const settings = structuredClone(stored);
+  settings.site.appPasswordSet = Boolean(stored.site.appPassword);
   settings.site.appPassword = '';
+  settings.image.apiKeySet = Boolean(stored.image.apiKey);
+  settings.image.apiKey = '';
   return settings;
 }

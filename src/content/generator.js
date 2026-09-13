@@ -85,7 +85,11 @@ const THUMBNAIL_BLOCK = `[썸네일 문구]
 - headline: 18자 이내 / subline: 30자 이내 / badge: 6자 이내
 - style: bold, gradient, minimal, editorial 중 하나 (정보성 글은 minimal 이나 bold 가 잘 어울립니다)
 - accent: 어두운 계열 HEX (흰 글씨가 올라갑니다)
-- 썸네일 문구에도 특수문자와 이모지를 쓰지 마세요.`;
+- 썸네일 문구에도 특수문자와 이모지를 쓰지 마세요.
+- scene: 썸네일 배경으로 그릴 장면을 **영어 한 문장**으로. 이미지 생성 모델에 그대로 들어갑니다.
+  주제를 상징하는 사물이나 공간을 담되, 사람 얼굴과 상표는 피하세요.
+  그림에는 글자를 넣지 않으므로 문구나 간판을 묘사하지 마세요.
+  예) "an open notebook, safety helmet and blueprints on a clean desk, morning light"`;
 
 function metaBlock() {
   return `[검색 최적화 필드]
@@ -139,7 +143,7 @@ function jsonShape({ withItems, withFaq, withCriteria, withTableRows }) {
   "summary": "한 줄 요약입니다.",
   "tags": ["태그1","태그2","태그3"],
   "guidelineCheck": "사용자 지침을 어떻게 반영했는지 한 줄 (지침 없으면 \\"\\")",
-  "thumbnail": {"headline":"...","subline":"...","badge":"...","style":"minimal","accent":"#1F3A93"},
+  "thumbnail": {"headline":"...","subline":"...","badge":"...","style":"minimal","accent":"#1F3A93","scene":"english scene description, no text"},
   "intro": ["도입 문단1", "도입 문단2", "도입 문단3"],${criteria}${table}
   "sections": [
     ${section}
@@ -165,8 +169,16 @@ function structureGuide(shape, settings, count) {
       + '상세 설명 / 자격 요건과 난이도 / 실제 활용(취업) 분야 / 장점과 단점 / 준비 팁');
     lines.push('- 항목마다 단점과 주의점도 솔직하게 적으세요. 장점만 나열하면 광고성 글로 보입니다.');
   } else if (shape === 'table') {
-    lines.push('- sections: 표를 읽는 법, 항목을 고르는 기준, 대표 항목 3~4개의 상세 설명으로 나눕니다.');
+    lines.push(
+      `- 이 글의 표는 ${count}개 행짜리로 꽤 큽니다. 본문은 그 표를 읽는 법을 안내하는 역할입니다.`,
+    );
+    lines.push('- sections: 표를 읽을 때 주의할 점, 항목을 고르는 기준, '
+      + '대표 항목 3~4개의 상세 설명으로 나눕니다.');
     lines.push('- 대표 항목 섹션에는 H3 세부 소제목(상세 설명 / 장단점 / 준비 팁)을 붙이세요.');
+    lines.push(
+      '- 표의 한계를 반드시 짚으세요. 예를 들어 "24위와 25위가 실제로 한 단계 차이라고 '
+      + '받아들이면 안 됩니다" 처럼, 순위를 그대로 믿으면 안 되는 이유를 한 문단 이상 쓰세요.',
+    );
   } else {
     lines.push(`- sections: H2 소제목 ${settings.post.sectionCount}개. `
       + '각 섹션에 H3 세부 소제목을 1개 이상 붙여 내용을 나눕니다.');
@@ -369,6 +381,8 @@ export function normalize(raw, topic, settings, shape = 'general') {
       subline: String(thumb.subline || raw.summary || '').trim().slice(0, 60),
       badge: String(thumb.badge || '').trim().slice(0, 12),
       emoji: String(thumb.emoji || '').trim().slice(0, 4),
+      // 배경 그림 생성 프롬프트에 들어갈 장면 설명. 이미지 API 를 껐으면 안 쓰인다.
+      scene: String(thumb.scene || '').trim().slice(0, 300),
       style,
       accent,
     },
@@ -510,7 +524,7 @@ export async function generatePost(topic, options = {}) {
   const guidelineBlock = buildGuidelineBlock(guideline);
   const exampleBlock = buildExampleBlock();
   const systemPrompt = buildSystemPrompt(guideline);
-  const { shape, count, needsChunking } = detectShape(topic);
+  const { shape, count, needsChunking } = detectShape(topic, settings.post.rankTargetCount);
 
   logger.step(
     `[${topic}] 글 모양: ${

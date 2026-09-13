@@ -14,6 +14,7 @@ import { checkClaude, runClaude } from './ai/claude.js';
 import { MODELS } from './ai/models.js';
 import { RULES } from './content/adsense.js';
 import { runResearch } from './content/research.js';
+import { generateBackground, pickAspectRatio } from './content/imagegen.js';
 import { listExamples, addExample, removeExample, setExampleEnabled, MAX_EXAMPLE_CHARS } from './content/examples.js';
 import { prepareBrowser, closeRenderBrowser } from './lib/playwright.js';
 import * as runner from './queue/runner.js';
@@ -210,6 +211,47 @@ app.post('/api/research/test', wrap(async (req, res) => {
   } catch (error) {
     logger.error(`웹 검색 테스트 실패: ${error.message}`);
     res.json({ ok: true, failed: true, message: error.message });
+  }
+}));
+
+/**
+ * 이미지 API 키가 실제로 되는지 한 장 뽑아 본다.
+ * 그림을 화면에 바로 띄워서 품질까지 눈으로 확인할 수 있게 한다.
+ */
+app.post('/api/image/test', wrap(async (req, res) => {
+  const settings = getSettings();
+  const apiKey = String(req.body?.apiKey || '').trim();
+  const model = String(req.body?.model || '').trim();
+  const style = String(req.body?.style || '').trim();
+
+  // 테스트 버튼으로 새 키를 넣었다면 먼저 저장한다. 한 번에 확인하고 쓰게.
+  const patch = { image: {} };
+  if (apiKey) patch.image.apiKey = apiKey;
+  if (model) patch.image.model = model;
+  if (style) patch.image.style = style;
+  if (Object.keys(patch.image).length) saveSettings(patch);
+
+  const { width, height } = getSettings().thumbnail;
+  logger.step(`이미지 생성 테스트 시작 (${getSettings().image.model})`);
+  try {
+    const result = await generateBackground(
+      {
+        headline: '국가기술자격증 정리',
+        scene: 'an open notebook, a safety helmet and rolled blueprints on a clean wooden desk, soft morning light',
+      },
+      { aspectRatio: pickAspectRatio(width, height) },
+    );
+    logger.info(`이미지 생성 테스트 성공 — ${result.model}, ${Math.round(result.bytes / 1024)}KB`);
+    res.json({
+      ok: true,
+      model: result.model,
+      kb: Math.round(result.bytes / 1024),
+      dataUri: result.dataUri,
+      settings: publicSettings(),
+    });
+  } catch (error) {
+    logger.error(`이미지 생성 테스트 실패: ${error.message}`);
+    res.json({ ok: true, failed: true, message: error.message, settings: publicSettings() });
   }
 }));
 
