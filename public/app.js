@@ -2,6 +2,7 @@ const $ = (id) => document.getElementById(id);
 
 const STATUS_LABEL = {
   pending: '대기',
+  researching: '자료 조사 중',
   writing: '글 작성 중',
   checking: '준수 보정 중',
   thumbnail: '썸네일 생성',
@@ -180,11 +181,25 @@ function complianceCell(job) {
     + `${compliance.passed}/${compliance.total}</span>`;
 }
 
+/**
+ * 검색 횟수와 출처 개수.
+ * 검색이 0회면 "검색했다고 말만 한" 결과라 경고로 표시한다.
+ */
+function sourceCell(job) {
+  if (!job.sourceCount && !job.searches) return '<span class="hint">-</span>';
+  const cls = job.searches ? 'pass' : 'fail';
+  const tip = job.searches
+    ? `웹 검색 ${job.searches}회로 모은 출처 ${job.sourceCount}건을 글 끝에 붙였습니다.`
+    : '웹 검색이 실제로 실행되지 않았습니다. 내용을 직접 확인하세요.';
+  return `<span class="check-badge ${cls}" title="${escapeHtml(tip)}">`
+    + `${job.searches}회 / ${job.sourceCount}건</span>`;
+}
+
 function renderJobs() {
   const body = $('job-body');
   const jobs = state.jobs || [];
   if (!jobs.length) {
-    body.innerHTML = '<tr><td colspan="10" class="empty">아직 추가된 주제가 없습니다.</td></tr>';
+    body.innerHTML = '<tr><td colspan="11" class="empty">아직 추가된 주제가 없습니다.</td></tr>';
     return;
   }
   const current = state.runner?.currentJobId;
@@ -203,17 +218,25 @@ function renderJobs() {
         links.push(`<a class="post-link" href="${escapeHtml(job.editUrl)}" target="_blank" rel="noopener">초안 열기</a>`);
       }
       if (job.archiveDir) {
-        links.push(`<a class="post-link" href="/posts/${encodeURIComponent(job.archiveDir)}/post.md" target="_blank" rel="noopener">마크다운</a>`);
-        links.push(`<a class="post-link" href="/posts/${encodeURIComponent(job.archiveDir)}/preview.html" target="_blank" rel="noopener">미리보기</a>`);
+        const dir = encodeURIComponent(job.archiveDir);
+        links.push(`<a class="post-link" href="/posts/${dir}/post.md" target="_blank" rel="noopener">마크다운</a>`);
+        links.push(`<a class="post-link" href="/posts/${dir}/preview.html" target="_blank" rel="noopener">미리보기</a>`);
+        if (job.sourceCount || job.searches) {
+          links.push(`<a class="post-link" href="/posts/${dir}/research.json" target="_blank" rel="noopener">조사 자료</a>`);
+        }
       }
+      const warn = job.unverified
+        ? `<span class="check-badge fail" title="조사에서 확인하지 못한 내용이 ${job.unverified}건 있습니다. 발행 전에 확인하세요.">미확인 ${job.unverified}</span>`
+        : '';
       return `<tr class="${job.id === current ? 'active' : ''}">
         <td>${index + 1}</td>
         <td class="topic">${escapeHtml(job.topic)}</td>
         <td><span class="badge ${job.status}">${label}</span></td>
         <td class="msg">${job.title ? `<b>${escapeHtml(job.title)}</b>` : ''}${escapeHtml(job.message || '')}
-          <div class="msg-links">${note} ${links.join(' ')}</div></td>
+          <div class="msg-links">${note} ${warn} ${links.join(' ')}</div></td>
         <td>${job.charCount ? job.charCount.toLocaleString() : '-'}</td>
         <td>${complianceCell(job)}</td>
+        <td class="src-cell">${sourceCell(job)}</td>
         <td>${job.tableRows ? `${job.tableRows}행` : '-'}</td>
         <td class="model-cell">${escapeHtml(shortModel(job.model))}</td>
         <td class="thumb-cell">${thumb}</td>
@@ -252,6 +275,12 @@ function renderSettings() {
   if (!s) return;
   $('s-site-url').value = s.site.url || '';
   $('s-site-user').value = s.site.username || '';
+
+  $('s-research').checked = Boolean(s.research.enabled);
+  $('s-searches').value = s.research.maxSearches;
+  $('s-show-sources').checked = Boolean(s.research.showSources);
+  $('s-require-sources').checked = Boolean(s.research.requireSources);
+  $('s-sources-heading').value = s.research.sourcesHeading || '';
 
   $('s-min-chars').value = s.post.minChars;
   $('s-sections').value = s.post.sectionCount;
@@ -529,6 +558,61 @@ for (const id of ['s-min-chars', 's-sections', 's-repairs', 's-enforce', 's-bloc
     toast('준수 규칙 설정을 저장했습니다.');
   });
 }
+
+/* ---------- 자료 조사 ---------- */
+
+for (const id of ['s-research', 's-searches', 's-show-sources', 's-require-sources', 's-sources-heading']) {
+  $(id).addEventListener('change', async () => {
+    await patchSettings({
+      research: {
+        enabled: $('s-research').checked,
+        maxSearches: Number($('s-searches').value),
+        showSources: $('s-show-sources').checked,
+        requireSources: $('s-require-sources').checked,
+        sourcesHeading: $('s-sources-heading').value.trim() || '참고 자료',
+      },
+    });
+    toast($('s-research').checked
+      ? '자료 조사 설정을 저장했습니다.'
+      : '자료 조사를 껐습니다. 앞으로는 검색 없이 글을 씁니다.');
+  });
+}
+
+$('btn-test-research').onclick = async () => {
+  const box = $('research-test-result');
+  const button = $('btn-test-research');
+  const topic = (state.jobs || [])[0]?.topic || '';
+  button.disabled = true;
+  box.classList.remove('hidden', 'bad', 'good');
+  box.textContent = '검색하는 중... (최대 7분)';
+  try {
+    const data = await api('/api/research/test', { method: 'POST', body: { topic } });
+    if (data.failed) {
+      box.classList.add('bad');
+      box.textContent = `실패: ${data.message}`;
+    } else if (!data.searches) {
+      // 검색을 한 번도 안 돌린 채로 답이 온 경우. 그대로 믿으면 안 된다.
+      box.classList.add('bad');
+      box.textContent =
+        '웹 검색이 실제로 실행되지 않았습니다 (검색 0회).\n'
+        + '모아온 내용이 검색 결과가 아니라 모델이 아는 내용일 수 있습니다.\n'
+        + 'claude CLI 를 최신 버전으로 올리고 구독 플랜에서 웹 검색을 쓸 수 있는지 확인해 보세요.';
+    } else {
+      box.classList.add('good');
+      box.textContent =
+        `성공 — 검색 ${data.searches}회, 사실 ${data.facts}건, 출처 ${data.sources.length}건`
+        + `${data.unverified ? `, 미확인 ${data.unverified}건` : ''}\n`
+        + (data.freshness ? `최신성: ${data.freshness}\n` : '')
+        + '\n찾아온 출처:\n'
+        + data.sources.map((s) => `- ${s.title}\n  ${s.url}`).join('\n');
+    }
+  } catch (error) {
+    box.classList.add('bad');
+    box.textContent = `실패: ${error.message}`;
+  } finally {
+    button.disabled = false;
+  }
+};
 
 /* ---------- 설정 ---------- */
 

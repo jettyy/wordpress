@@ -9,14 +9,50 @@
  * 코드를 고친 뒤 여기부터 돌려보면 주제 100개를 태우기 전에 문제가 드러난다.
  */
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { checkCompliance, countChars, buildRuleBlock } from '../src/content/adsense.js';
 import { buildPostContent, buildPreviewHtml } from '../src/content/gutenberg.js';
 import { buildMarkdown } from '../src/content/markdown.js';
 import { DEFAULT_SETTINGS } from '../src/lib/settings.js';
 import { detectShape } from '../src/content/ranking.js';
+import { buildResearchBlock, isUsableUrl } from '../src/content/research.js';
 import { normalizeSiteUrl, normalizeSlug, parseTopics } from '../src/lib/util.js';
 
 const settings = structuredClone(DEFAULT_SETTINGS);
+
+/**
+ * 먼저 모든 모듈을 한 번씩 불러 본다.
+ *
+ * 아래 검사들은 일부 모듈만 import 하기 때문에, 손대지 않은 파일에
+ * 오타나 문법 오류가 있어도 "모두 통과" 가 뜰 수 있다. 실제로 그런 적이 있다.
+ * (server.js 는 부르면 서버가 떠버리므로 뺀다)
+ */
+async function loadEveryModule() {
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const srcDir = path.join(here, '..', 'src');
+  const files = [];
+
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.js') && entry.name !== 'server.js') files.push(full);
+    }
+  };
+  walk(srcDir);
+
+  const broken = [];
+  for (const file of files.sort()) {
+    try {
+      await import(pathToFileURL(file).href);
+    } catch (error) {
+      broken.push(`${path.relative(srcDir, file)}: ${error.message.split('\n')[0]}`);
+    }
+  }
+  return { count: files.length, broken };
+}
 
 /** 규칙을 모두 지킨 글. 분량은 문단을 늘려 채운다. */
 function buildSamplePost() {
@@ -109,6 +145,13 @@ function test(name, fn) {
     console.log(`  실패  ${name}\n        ${error.message}`);
   }
 }
+
+console.log('\n[0] 모듈 불러오기');
+
+const modules = await loadEveryModule();
+test(`src 아래 ${modules.count}개 모듈이 모두 열린다`, () => {
+  assert.equal(modules.broken.length, 0, `\n        ${modules.broken.join('\n        ')}`);
+});
 
 console.log('\n[1] 준수 검사기');
 
@@ -267,7 +310,98 @@ test('H1 하나, H2/H3 소제목, 표가 들어간다', () => {
   assert.ok(markdown.includes('\n- '), '불렛 포인트가 없습니다');
 });
 
-console.log('\n[4] 보조 함수');
+console.log('\n[4] 자료 조사 · 출처');
+
+const sampleSources = [
+  { title: '국가기술자격 시행계획 공고', publisher: '한국산업인력공단', url: 'https://www.q-net.or.kr/notice/1234', date: '2026-01' },
+  { title: '산업안전기사 응시 자격 안내', publisher: 'Q-net', url: 'https://www.q-net.or.kr/guide/safety', date: '2026-02' },
+];
+
+test('지어낸 주소와 자리표시자 주소를 걸러낸다', () => {
+  assert.equal(isUsableUrl('https://www.q-net.or.kr/notice/1234'), true);
+  assert.equal(isUsableUrl('http://localhost:8080/x'), false, 'localhost 를 통과시켰습니다');
+  assert.equal(isUsableUrl('https://example.com/a'), false, '자리표시자 주소를 통과시켰습니다');
+  assert.equal(isUsableUrl('출처: 한국산업인력공단'), false);
+  assert.equal(isUsableUrl(''), false);
+});
+
+test('조사 자료 블록에 사실과 미확인 항목이 들어간다', () => {
+  const block = buildResearchBlock({
+    summary: '2026년 시행계획이 공고되었습니다.',
+    freshness: '2026년 1월 공고 기준입니다.',
+    items: ['산업안전기사'],
+    facts: [{ claim: '제1회 필기시험은 1월 30일에 시작합니다.', detail: 'CBT 방식입니다.', source: 'Q-net', url: 'https://www.q-net.or.kr/notice/1234', date: '2026-01' }],
+    sources: sampleSources,
+    unverified: ['실기 합격률은 출처마다 달랐습니다.'],
+  });
+  assert.ok(block.includes('제1회 필기시험은 1월 30일에 시작합니다.'), '사실이 안 들어갔습니다');
+  assert.ok(block.includes('확인하지 못한 내용'), '미확인 항목이 안 들어갔습니다');
+  assert.ok(block.includes('본문에 URL 을 직접 적지 마세요'), 'URL 금지 안내가 없습니다');
+  assert.equal(buildResearchBlock(null), '', '자료가 없으면 빈 문자열이어야 합니다');
+});
+
+// "참고 자료" 라는 말은 표 아래 안내문에도 들어간다.
+// 위치를 따질 때는 반드시 소제목 마크업으로 찾아야 엉뚱한 곳을 짚지 않는다.
+const h2 = (text) => `<h2 class="wp-block-heading">${text}</h2>`;
+
+test('출처가 있으면 글 끝에 링크 목록이 붙는다', () => {
+  const post = buildSamplePost();
+  post.sources = sampleSources;
+  const content = buildPostContent(post, '', { moreTag: true, sourcesHeading: '참고 자료' });
+  assert.ok(content.includes(h2('참고 자료')), '출처 소제목이 없습니다');
+  assert.ok(content.includes('href="https://www.q-net.or.kr/notice/1234"'), '링크가 없습니다');
+  assert.ok(content.includes('rel="noopener noreferrer"'), 'rel 속성이 없습니다');
+  // 출처는 마무리 문단보다 뒤에 와야 읽는 흐름이 끊기지 않는다.
+  assert.ok(
+    content.indexOf(h2('참고 자료')) > content.indexOf(h2('자주 묻는 질문')),
+    '출처가 본문 앞에 있습니다',
+  );
+
+  const opens = content.match(/<!-- wp:([a-z-]+)(?: |-->)/g) || [];
+  const closes = content.match(/<!-- \/wp:([a-z-]+) -->/g) || [];
+  assert.equal(opens.length, closes.length, '출처를 붙이면서 블록 주석 짝이 깨졌습니다');
+});
+
+test('출처 제목에 든 HTML 은 이스케이프된다', () => {
+  const post = buildSamplePost();
+  post.sources = [{ title: '<script>alert(1)</script> 공고', publisher: '', url: 'https://www.q-net.or.kr/x', date: '' }];
+  const content = buildPostContent(post, '', {});
+  assert.ok(!content.includes('<script>'), '스크립트 태그가 그대로 들어갔습니다');
+});
+
+test('출처가 없으면 목록을 붙이지 않는다', () => {
+  const content = buildPostContent(buildSamplePost(), '', {});
+  assert.ok(!content.includes(h2('참고 자료')), '출처가 없는데 목록이 붙었습니다');
+  assert.ok(!content.includes('<a href'), '출처가 없는데 링크가 들어갔습니다');
+});
+
+test('마크다운에도 출처 링크가 들어간다', () => {
+  const post = buildSamplePost();
+  post.sources = sampleSources;
+  const markdown = buildMarkdown(post, { sourcesHeading: '참고 자료' });
+  assert.ok(markdown.includes('## 참고 자료'), '출처 소제목이 없습니다');
+  assert.ok(
+    markdown.includes('[국가기술자격 시행계획 공고](https://www.q-net.or.kr/notice/1234)'),
+    '마크다운 링크 형식이 아닙니다',
+  );
+});
+
+test('출처를 붙여도 준수 검사를 통과한다', () => {
+  const post = buildSamplePost();
+  post.sources = sampleSources;
+  const result = checkCompliance(post, settings);
+  assert.equal(result.ok, true, `미통과: ${result.issues.map((i) => i.label).join(', ')}`);
+});
+
+test('검색을 못 돌린 조사 결과는 미리보기에 경고로 남는다', () => {
+  const post = buildSamplePost();
+  post.research = { searches: 0, facts: [], sources: [], unverified: ['확인 못 함'], freshness: '' };
+  const html = buildPreviewHtml(post, buildPostContent(post, '', {}));
+  assert.ok(html.includes('웹 검색이 실제로 실행되지 않았습니다'), '경고가 없습니다');
+  assert.ok(html.includes('확인하지 못한 내용'), '미확인 목록이 없습니다');
+});
+
+console.log('\n[5] 보조 함수');
 
 test('주제 문자열에서 글의 모양을 알아낸다', () => {
   assert.equal(detectShape('국가기술자격증 TOP 5').shape, 'items');

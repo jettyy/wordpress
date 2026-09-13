@@ -35,7 +35,7 @@ function tableMarkdown(table) {
   return lines;
 }
 
-export function buildMarkdown(post, { thumbnailFile = '' } = {}) {
+export function buildMarkdown(post, { thumbnailFile = '', sourcesHeading = '참고 자료' } = {}) {
   const lines = [`# ${inline(post.title)}`, ''];
 
   post.intro.forEach((text) => lines.push(inline(text), ''));
@@ -80,6 +80,25 @@ export function buildMarkdown(post, { thumbnailFile = '' } = {}) {
   }
 
   post.outro.forEach((text) => lines.push(inline(text), ''));
+
+  if (post.sources?.length) {
+    lines.push(`## ${inline(sourcesHeading)}`, '');
+    lines.push(
+      '아래 자료를 참고해 정리했습니다. 제도와 일정은 바뀔 수 있으니 '
+      + '중요한 내용은 각 기관의 공식 공지에서 다시 확인하시기 바랍니다.',
+      '',
+    );
+    for (const source of post.sources) {
+      const meta = [source.publisher, source.date]
+        .filter(Boolean)
+        .filter((part, index, all) => all.indexOf(part) === index)
+        .join(', ');
+      // 제목에 든 대괄호는 마크다운 링크 문법을 깨뜨린다.
+      const title = inline(source.title || source.url).replace(/[[\]]/g, '');
+      lines.push(`- [${title}](${source.url})${meta ? ` (${meta})` : ''}`);
+    }
+    lines.push('');
+  }
 
   // 연속된 빈 줄을 하나로 줄여 깔끔하게 끝낸다.
   return `${lines.join('\n').replace(/\n{3,}/g, '\n\n').trim()}\n`;

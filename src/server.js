@@ -13,6 +13,7 @@ import { previewThumbnailHtml } from './content/thumbnail.js';
 import { checkClaude, runClaude } from './ai/claude.js';
 import { MODELS } from './ai/models.js';
 import { RULES } from './content/adsense.js';
+import { runResearch } from './content/research.js';
 import { listExamples, addExample, removeExample, setExampleEnabled, MAX_EXAMPLE_CHARS } from './content/examples.js';
 import { prepareBrowser, closeRenderBrowser } from './lib/playwright.js';
 import * as runner from './queue/runner.js';
@@ -180,6 +181,35 @@ app.post('/api/ai/test', wrap(async (req, res) => {
   } catch (error) {
     logger.error(`AI 연결 테스트 실패: ${error.message}`);
     res.json({ ok: true, failed: true, message: error.message, dumpFile: error.dumpFile || '' });
+  }
+}));
+
+/**
+ * 웹 검색이 실제로 도는지 한 주제로 시험해 본다.
+ *
+ * 검색은 "했다고 말만 하고 안 하는" 경우가 있어서, 실제 검색 횟수와
+ * 받아온 출처 URL 을 눈으로 확인할 수 있어야 한다.
+ */
+app.post('/api/research/test', wrap(async (req, res) => {
+  const topic = String(req.body?.topic || '').trim() || '2026년 산업안전기사 시험일정';
+  logger.step(`웹 검색 테스트 시작 — "${topic}"`);
+  try {
+    const research = await runResearch(topic, { shape: 'general' });
+    if (!research) {
+      res.json({ ok: true, failed: true, message: '자료 조사가 꺼져 있거나 실패했습니다. 진행 로그를 확인하세요.' });
+      return;
+    }
+    res.json({
+      ok: true,
+      searches: research.searches,
+      facts: research.facts.length,
+      unverified: research.unverified.length,
+      freshness: research.freshness,
+      sources: research.sources.slice(0, 8),
+    });
+  } catch (error) {
+    logger.error(`웹 검색 테스트 실패: ${error.message}`);
+    res.json({ ok: true, failed: true, message: error.message });
   }
 }));
 

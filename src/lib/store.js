@@ -9,6 +9,7 @@ import { shortId, nowIso } from './util.js';
  */
 export const STATUS = {
   PENDING: 'pending',
+  RESEARCHING: 'researching',
   WRITING: 'writing',
   CHECKING: 'checking',
   THUMBNAIL: 'thumbnail',
@@ -18,7 +19,9 @@ export const STATUS = {
   SKIPPED: 'skipped',
 };
 
-const RUNNING_STATUSES = [STATUS.WRITING, STATUS.CHECKING, STATUS.THUMBNAIL, STATUS.POSTING];
+const RUNNING_STATUSES = [
+  STATUS.RESEARCHING, STATUS.WRITING, STATUS.CHECKING, STATUS.THUMBNAIL, STATUS.POSTING,
+];
 
 let jobs = null;
 
@@ -79,6 +82,9 @@ export function addTopics(topics) {
       tableRows: 0,
       compliance: null,      // { ok, passed, total, issues: [] }
       repairs: 0,
+      searches: 0,           // 실제로 돈 웹 검색 횟수
+      sourceCount: 0,        // 글에 붙인 출처 개수
+      unverified: 0,         // 조사에서 확인하지 못한 항목 수
       editUrl: '',
       postUrl: '',
       archiveDir: '',

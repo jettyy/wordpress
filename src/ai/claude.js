@@ -98,10 +98,34 @@ function pickModel(envelope) {
   const entries = Object.entries(usage);
   if (!entries.length) return '';
   // 여러 모델이 섞였다면 출력 토큰이 가장 많은 쪽이 본문을 쓴 모델이다.
+  // (웹 검색은 별도의 작은 모델이 대신 도는 경우가 있어 출력 토큰이 적다)
   entries.sort((a, b) => (b[1]?.outputTokens || 0) - (a[1]?.outputTokens || 0));
   const [id, info] = entries[0];
   return info?.canonicalModel || id;
 }
+
+/**
+ * 웹 검색을 실제로 몇 번 돌렸는지 센다.
+ *
+ * usage.server_tool_use 는 0 으로 남는 경우가 있고, 실제 횟수는
+ * modelUsage 안의 모델별 항목에 들어온다. 검색을 대신 돈 모델까지
+ * 합쳐야 맞는 숫자가 나온다. 이 숫자가 0 이면 "검색했다고 말만 한 것"이다.
+ */
+function countWebUse(envelope) {
+  let searches = 0;
+  let fetches = 0;
+  for (const info of Object.values(envelope?.modelUsage || {})) {
+    searches += Number(info?.webSearchRequests) || 0;
+    fetches += Number(info?.webFetchRequests) || 0;
+  }
+  const server = envelope?.usage?.server_tool_use;
+  searches = Math.max(searches, Number(server?.web_search_requests) || 0);
+  fetches = Math.max(fetches, Number(server?.web_fetch_requests) || 0);
+  return { searches, fetches };
+}
+
+/** 자료 조사에 쓰는 도구. 파일을 읽거나 명령을 실행하는 도구는 넣지 않는다. */
+export const WEB_TOOLS = ['WebSearch', 'WebFetch'];
 
 /**
  * Claude Code CLI 를 -p(print) 모드로 호출한다.
@@ -110,9 +134,13 @@ function pickModel(envelope) {
  * 시스템 프롬프트는 --system-prompt 인자가 아니라 stdin 본문 맨 앞에 넣는다.
  * 윈도우에서 공백이 든 인자가 쪼개지는 문제를 원천적으로 피하기 위해서다.
  *
- * @returns {Promise<{text: string, model: string, costUsd: number, durationMs: number}>}
+ * @param {object}   options
+ * @param {string[]} options.tools  쓰게 할 도구 목록. 비우면 도구 없이 돈다.
+ * @returns {Promise<{text, model, costUsd, durationMs, searches, fetches}>}
  */
-export function runClaude(prompt, { systemPrompt = '', timeoutMs, signal, model } = {}) {
+export function runClaude(prompt, {
+  systemPrompt = '', timeoutMs, signal, model, tools = [],
+} = {}) {
   const settings = getSettings();
   const command = settings.claude.command || 'claude';
   const limit = timeoutMs || settings.claude.timeoutMs || 420000;
@@ -121,10 +149,21 @@ export function runClaude(prompt, { systemPrompt = '', timeoutMs, signal, model 
   const args = [
     '-p',
     '--output-format', 'json',
-    '--restricted',            // 글쓰기에는 Bash/코드 실행 도구가 필요 없다.
+    // 글쓰기에는 Bash/코드 실행 도구가 필요 없다.
+    // --restricted 는 그걸 막으면서 파일 접근도 작업 폴더 안으로 가둔다.
+    '--restricted',
     '--no-session-persistence',
     '--strict-mcp-config',
   ];
+
+  if (tools.length) {
+    const list = tools.join(',');
+    // --tools 만 주면 "쓸 수 있는 도구"만 정해지고 실행 권한은 따로 막힌다.
+    // -p 모드에는 권한을 물어볼 사람이 없어서 --allowedTools 로 미리 허용해야
+    // 실제로 검색이 돈다. (안 그러면 "권한이 거부되었습니다" 라고만 답한다)
+    args.push('--tools', list, '--allowedTools', list, '--permission-mode', 'dontAsk');
+  }
+
   if (wanted) args.push('--model', wanted);
 
   const fullPrompt = systemPrompt
@@ -222,15 +261,21 @@ export function runClaude(prompt, { systemPrompt = '', timeoutMs, signal, model 
           reject(error);
           return;
         }
+        const web = countWebUse(envelope);
         resolve({
           text: String(envelope.result ?? ''),
           model: pickModel(envelope) || wanted || '',
           costUsd: Number(envelope.total_cost_usd) || 0,
           durationMs: Number(envelope.duration_ms) || 0,
+          searches: web.searches,
+          fetches: web.fetches,
         });
       } catch {
         // --output-format json 이 아닌 형태로 나온 경우 원문을 그대로 쓴다.
-        resolve({ text: stdout.trim(), model: wanted || '', costUsd: 0, durationMs: 0 });
+        resolve({
+          text: stdout.trim(), model: wanted || '', costUsd: 0, durationMs: 0,
+          searches: 0, fetches: 0,
+        });
       }
     });
 
@@ -270,7 +315,13 @@ export async function runClaudeJson(prompt, options = {}) {
   try {
     const reply = await runClaude(prompt, options);
     lastText = reply.text;
-    return { data: extractJson(reply.text), model: reply.model, costUsd: reply.costUsd };
+    return {
+      data: extractJson(reply.text),
+      model: reply.model,
+      costUsd: reply.costUsd,
+      searches: reply.searches,
+      fetches: reply.fetches,
+    };
   } catch (error) {
     // 파싱이 깨졌을 때 원문이 없으면 왜 깨졌는지 알 방법이 없다.
     if (lastText) {
@@ -297,7 +348,13 @@ export async function runClaudeJson(prompt, options = {}) {
       `[중요] 설명이나 인사말 없이 JSON 객체 하나만 출력하세요. ` +
       `코드 펜스(\`\`\`)도 쓰지 말고 '{' 로 시작해서 '}' 로 끝나야 합니다.`;
     const reply = await runClaude(retryPrompt, options);
-    return { data: extractJson(reply.text), model: reply.model, costUsd: reply.costUsd };
+    return {
+      data: extractJson(reply.text),
+      model: reply.model,
+      costUsd: reply.costUsd,
+      searches: reply.searches,
+      fetches: reply.fetches,
+    };
   }
 }
 

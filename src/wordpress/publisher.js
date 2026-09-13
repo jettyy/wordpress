@@ -36,7 +36,10 @@ export async function saveDraft({ post, thumbnailPath, jobId = '', signal }) {
     ? buildImageBlock({ id: media.id, url: media.url, alt: post.title })
     : '';
 
-  const content = buildPostContent(post, imageBlock, { moreTag: settings.post.moreTag });
+  const content = buildPostContent(post, imageBlock, {
+    moreTag: settings.post.moreTag,
+    sourcesHeading: settings.research.sourcesHeading,
+  });
 
   /* 3. 태그 --------------------------------------------------------- */
   let tagIds = [];

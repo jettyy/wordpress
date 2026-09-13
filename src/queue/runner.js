@@ -50,11 +50,23 @@ function archivePost(job, post, thumbnailPath) {
     fs.copyFileSync(thumbnailPath, path.join(dir, thumbName));
   }
 
-  const content = buildPostContent(post, '', { moreTag: getSettings().post.moreTag });
+  const settings = getSettings();
+  const sourcesHeading = settings.research.sourcesHeading;
+  const content = buildPostContent(post, '', { moreTag: settings.post.moreTag, sourcesHeading });
+
   fs.writeFileSync(path.join(dir, 'post.json'), JSON.stringify(post, null, 2), 'utf8');
-  fs.writeFileSync(path.join(dir, 'post.md'), buildMarkdown(post, { thumbnailFile: thumbName }), 'utf8');
+  fs.writeFileSync(
+    path.join(dir, 'post.md'),
+    buildMarkdown(post, { thumbnailFile: thumbName, sourcesHeading }),
+    'utf8',
+  );
   fs.writeFileSync(path.join(dir, 'content.html'), content, 'utf8');
   fs.writeFileSync(path.join(dir, 'preview.html'), buildPreviewHtml(post, content), 'utf8');
+
+  // 조사 원자료를 따로 남긴다. 발행 전에 "무엇을 근거로 썼는지" 확인하는 용도다.
+  if (post.research) {
+    fs.writeFileSync(path.join(dir, 'research.json'), JSON.stringify(post.research, null, 2), 'utf8');
+  }
   return dir;
 }
 
@@ -65,14 +77,20 @@ async function processJob(job) {
   const settings = getSettings();
 
   updateJob(job.id, {
-    status: STATUS.WRITING,
-    message: 'AI가 애드센스 승인 기준에 맞춰 글을 쓰는 중...',
+    status: settings.research.enabled ? STATUS.RESEARCHING : STATUS.WRITING,
+    message: settings.research.enabled
+      ? '웹에서 최신 자료를 찾는 중...'
+      : 'AI가 애드센스 승인 기준에 맞춰 글을 쓰는 중...',
     attempts: job.attempts + 1,
   });
   logger.step(`[${job.topic}] 글 생성 시작`, { jobId: job.id });
 
   const post = await generatePost(job.topic, {
     signal: state.abort?.signal,
+    onResearch: () => {
+      if (!settings.research.enabled) return;
+      updateJob(job.id, { status: STATUS.RESEARCHING, message: '웹에서 최신 자료를 찾는 중...' });
+    },
     onCompliance: () => {
       updateJob(job.id, { status: STATUS.CHECKING, message: '준수 검사에서 걸린 부분을 고쳐 쓰는 중...' });
     },
@@ -81,8 +99,10 @@ async function processJob(job) {
   const charCount = countChars(post);
   const tableRows = post.table?.rows?.length || 0;
   const compliance = post.compliance;
+  const research = post.research;
 
   const notes = [`공백 제외 ${charCount.toLocaleString()}자`];
+  if (research) notes.push(`검색 ${research.searches}회 · 출처 ${post.sources.length}건`);
   if (tableRows) {
     notes.push(post.tableExpected ? `표 ${tableRows}/${post.tableExpected}행` : `표 ${tableRows}행`);
   }
@@ -98,6 +118,9 @@ async function processJob(job) {
     guidelineCheck: post.guidelineCheck,
     compliance,
     repairs: post.repairs || 0,
+    searches: research?.searches || 0,
+    sourceCount: post.sources?.length || 0,
+    unverified: research?.unverified?.length || 0,
     message: `초안 완성 (${notes.join(', ')})`,
   });
   logger.info(
@@ -107,6 +130,13 @@ async function processJob(job) {
   );
   if (post.guidelineCheck) {
     logger.info(`[${job.topic}] 지침 반영: ${post.guidelineCheck}`, { jobId: job.id });
+  }
+  if (research?.unverified?.length) {
+    logger.warn(
+      `[${job.topic}] 조사에서 확인하지 못한 내용 ${research.unverified.length}건이 있습니다. `
+      + `발행 전에 확인하세요: ${research.unverified.slice(0, 3).join(' / ')}`,
+      { jobId: job.id },
+    );
   }
 
   // 끝내 규칙을 못 지킨 글을 올리지 않도록 막을 수 있다. 기본값은 "올리되 표시만".

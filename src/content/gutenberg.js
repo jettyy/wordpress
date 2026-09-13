@@ -32,9 +32,13 @@ function heading(text, level = 2) {
     + '<!-- /wp:heading -->';
 }
 
-function list(items) {
+/**
+ * @param {boolean} raw  항목이 이미 안전한 HTML 일 때만 true.
+ *                       (출처 목록의 <a> 링크. 그 외에는 전부 이스케이프한다)
+ */
+function list(items, raw = false) {
   const li = items
-    .map((item) => `<!-- wp:list-item -->\n<li>${inline(item)}</li>\n<!-- /wp:list-item -->`)
+    .map((item) => `<!-- wp:list-item -->\n<li>${raw ? item : inline(item)}</li>\n<!-- /wp:list-item -->`)
     .join('\n');
   return `<!-- wp:list -->\n<ul class="wp-block-list">${li}</ul>\n<!-- /wp:list -->`;
 }
@@ -115,6 +119,35 @@ function criteriaBlocks(criteria) {
   return blocks;
 }
 
+/**
+ * 글 끝의 출처 목록.
+ *
+ * 애드센스 심사에서 "근거 있는 글" 로 보이게 하는 부분이고,
+ * 읽는 사람이 원문을 직접 확인할 수 있게 해주는 장치이기도 하다.
+ * URL 은 조사 단계에서 실제 검색 결과에 나온 것만 남겨둔 상태다.
+ */
+function sourcesBlocks(post, headingText) {
+  if (!post.sources?.length) return [];
+
+  const items = post.sources.map((source) => {
+    const title = escapeHtml(source.title || source.url);
+    const meta = [source.publisher, source.date]
+      .filter(Boolean)
+      .filter((part, index, all) => all.indexOf(part) === index)
+      .join(', ');
+    // rel 에 noopener 를 넣지 않으면 새 창이 원래 페이지를 조작할 수 있다.
+    return `<a href="${escapeHtml(source.url)}" target="_blank" rel="noopener noreferrer">${title}</a>`
+      + (meta ? ` ${escapeHtml(`(${meta})`)}` : '');
+  });
+
+  return [
+    heading(headingText || '참고 자료', 2),
+    paragraph('아래 자료를 참고해 정리했습니다. 제도와 일정은 바뀔 수 있으니 '
+      + '중요한 내용은 각 기관의 공식 공지에서 다시 확인하시기 바랍니다.'),
+    list(items, true),
+  ];
+}
+
 function faqBlocks(faq) {
   if (!faq?.length) return [];
   const blocks = [heading('자주 묻는 질문', 2)];
@@ -133,13 +166,17 @@ export function buildIntroBlocks(post) {
 /**
  * 글 본문 전체를 구텐베르크 블록 마크업으로 만든다.
  *
- * 순서: 도입부 → 썸네일 → (더 읽기) → 선정 기준 → 비교표 → 본문 섹션 → FAQ → 마무리
+ * 순서: 도입부 → 썸네일 → (더 읽기) → 선정 기준 → 비교표 → 본문 섹션
+ *       → FAQ → 마무리 → 참고 자료
+ *
+ * 출처 목록을 맨 끝에 두는 이유는, 읽는 흐름을 끊지 않으면서도
+ * 글이 무엇을 근거로 쓰였는지 확인할 수 있게 하기 위해서다.
  *
  * @param {object} post
  * @param {string} imageBlock  업로드된 썸네일의 이미지 블록 (없으면 빈 문자열)
- * @param {{moreTag?: boolean}} options
+ * @param {{moreTag?: boolean, sourcesHeading?: string}} options
  */
-export function buildPostContent(post, imageBlock = '', { moreTag = true } = {}) {
+export function buildPostContent(post, imageBlock = '', { moreTag = true, sourcesHeading = '참고 자료' } = {}) {
   const blocks = [...buildIntroBlocks(post)];
 
   if (imageBlock) blocks.push(imageBlock);
@@ -166,6 +203,12 @@ export function buildPostContent(post, imageBlock = '', { moreTag = true } = {})
     blocks.push(...post.outro.map(paragraph));
   }
 
+  const sources = sourcesBlocks(post, sourcesHeading);
+  if (sources.length) {
+    blocks.push(separator());
+    blocks.push(...sources);
+  }
+
   return blocks.filter(Boolean).join('\n\n');
 }
 
@@ -181,6 +224,24 @@ export function buildPreviewHtml(post, content) {
   if (post.guidelineCheck) meta.push(`<b>AI 자체 확인</b><br>${escapeHtml(post.guidelineCheck)}`);
   if (post.model) meta.push(`<b>사용 모델</b> ${escapeHtml(post.model)}`);
   if (post.tags?.length) meta.push(`<b>태그</b> ${escapeHtml(post.tags.join(', '))}`);
+
+  // 발행 전에 사람이 확인해야 하는 부분이라 미리보기 맨 위에 올린다.
+  if (post.research) {
+    const research = post.research;
+    const rows = [
+      `검색 ${research.searches}회 · 사실 ${research.facts.length}건 · 출처 ${research.sources.length}건`,
+    ];
+    if (!research.searches) {
+      rows.push('<b style="color:#b3302a;">웹 검색이 실제로 실행되지 않았습니다. '
+        + '아래 내용은 검색 결과가 아닐 수 있으니 반드시 직접 확인하세요.</b>');
+    }
+    if (research.freshness) rows.push(`최신성: ${escapeHtml(research.freshness)}`);
+    if (research.unverified?.length) {
+      rows.push(`<b>확인하지 못한 내용</b><br>${research.unverified
+        .map((item) => `- ${escapeHtml(item)}`).join('<br>')}`);
+    }
+    meta.push(`<b>자료 조사</b><br>${rows.join('<br>')}`);
+  }
   if (post.compliance) {
     const rows = post.compliance.results
       .map((result) => `${result.ok ? '통과' : '미통과'} · ${escapeHtml(result.label)} — ${escapeHtml(result.detail)}`)

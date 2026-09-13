@@ -4,6 +4,7 @@ import { logger } from '../lib/events.js';
 import { normalizeSlug } from '../lib/util.js';
 import { buildExampleBlock } from './examples.js';
 import { detectShape, generateTableRows, ITEM_LIMIT } from './ranking.js';
+import { runResearch, buildResearchBlock } from './research.js';
 import {
   buildRuleBlock, buildRepairBlock, checkCompliance, countChars, summarize,
 } from './adsense.js';
@@ -179,14 +180,37 @@ function structureGuide(shape, settings, count) {
   return lines.join('\n');
 }
 
-const HONESTY_BLOCK = [
-  '[사실관계]',
-  '- 실시간 검색을 할 수 없으므로, 공식 조사 수치나 연도별 통계를 지어내지 마세요.',
-  '- 순위는 절대적인 우열이 아니라 "널리 알려진 정보를 정리한 참고 순서" 로 다루세요.',
-  '- table.note 에는 "공식 순위가 아니라 일반적으로 알려진 정보를 정리한 참고 자료이며 '
-  + '최신 정보는 직접 확인이 필요하다"는 안내를 완전한 문장으로 넣으세요.',
-  '- 모르는 제도나 금액은 "지역과 시기에 따라 다릅니다" 처럼 정직하게 여지를 두고 쓰세요.',
-].join('\n');
+/**
+ * 사실관계 지침. 조사 자료가 있느냐에 따라 말이 달라져야 한다.
+ *
+ * 검색 자료를 붙여 놓고 "너는 검색을 못 하니 수치를 쓰지 마라" 라고 하면
+ * 모델이 애써 찾아온 수치를 다 버리고 두루뭉술하게 쓴다. 반대로 자료가
+ * 없는데 수치를 쓰라고 하면 지어낸다. 그래서 두 경우를 나눈다.
+ */
+function honestyBlock(hasResearch) {
+  const lines = ['[사실관계]'];
+  if (hasResearch) {
+    lines.push(
+      '- 구체적인 수치, 일정, 기준, 제도 내용은 **위 조사 자료에 있는 것만** 쓰세요.',
+      '- 조사 자료에 없는 수치는 지어내지 말고 "지역과 시기에 따라 다릅니다" 처럼 여지를 두세요.',
+      '- 조사 자료의 "확인하지 못한 내용" 은 단정하지 말고, 확인이 필요하다고 밝히세요.',
+      '- 수치를 쓸 때는 기준 시점을 함께 밝히세요. (예: 2026년 기준)',
+      '- 본문에 URL 이나 링크를 직접 적지 마세요. 출처 목록은 글 끝에 자동으로 붙습니다.',
+    );
+  } else {
+    lines.push(
+      '- 실시간 검색을 하지 못했으므로, 공식 조사 수치나 연도별 통계를 지어내지 마세요.',
+      '- 모르는 제도나 금액은 "지역과 시기에 따라 다릅니다" 처럼 정직하게 여지를 두고 쓰세요.',
+    );
+  }
+  const basis = hasResearch ? '공개된 자료' : '일반적으로 알려진 정보';
+  lines.push(
+    '- 순위는 절대적인 우열이 아니라 "정리한 참고 순서" 로 다루세요.',
+    `- table.note 에는 "공식 순위가 아니라 ${basis}를 정리한 참고 자료이며 `
+    + '최신 정보는 직접 확인이 필요하다"는 안내를 완전한 문장으로 넣으세요.',
+  );
+  return lines.join('\n');
+}
 
 const FORMAT_BLOCK = [
   '[서식]',
@@ -199,7 +223,9 @@ const FORMAT_BLOCK = [
 /* 프롬프트 조립                                                        */
 /* ------------------------------------------------------------------ */
 
-function buildMainPrompt(topic, settings, { guidelineBlock, exampleBlock, shape, count }) {
+function buildMainPrompt(topic, settings, {
+  guidelineBlock, exampleBlock, researchBlock, shape, count,
+}) {
   const withTableRows = shape !== 'table';   // 큰 표는 뒤에서 따로 채운다.
   const tableHint = withTableRows
     ? `- table.rows 를 ${count ? `${count}개` : '항목 수만큼'} 빠짐없이 채우세요. "이하 생략" 금지.`
@@ -209,13 +235,13 @@ function buildMainPrompt(topic, settings, { guidelineBlock, exampleBlock, shape,
   return `${guidelineBlock}${basicsBlock(settings, topic)}
 
 위 주제로 워드프레스에 올릴 애드센스 승인용 정보성 포스팅 한 편을 써주세요.
-
+${researchBlock ? `\n${researchBlock}` : ''}
 ${buildRuleBlock(settings, shape)}
 
 ${structureGuide(shape, settings, count)}
 ${tableHint}
 
-${HONESTY_BLOCK}
+${honestyBlock(Boolean(researchBlock))}
 
 ${FORMAT_BLOCK}
 
@@ -352,6 +378,9 @@ export function normalize(raw, topic, settings, shape = 'general') {
     sections,
     faq: settings.post.addFaq ? normalizeFaq(raw.faq) : [],
     outro: toParagraphList(raw.outro),
+    // 조사 단계에서 채운다. 글 끝의 출처 목록이 된다.
+    sources: [],
+    research: null,
     model: '',
     costUsd: 0,
     compliance: null,
@@ -453,6 +482,11 @@ async function repairUntilCompliant(post, { topic, settings, systemPrompt, signa
     repaired.model = reply.model || current.model;
     repaired.costUsd = (current.costUsd || 0) + (reply.costUsd || 0);
     repaired.repairs = attempt;
+    // 조사 결과는 글을 고쳐 쓴다고 달라지지 않는다. 그대로 물려준다.
+    repaired.sources = current.sources;
+    repaired.research = current.research;
+    repaired.tableExpected = current.tableExpected;
+    repaired.tableMissing = current.tableMissing;
     repaired.compliance = checkCompliance(repaired, settings);
 
     // 고친 결과가 더 나빠졌다면 되돌린다. (규칙 통과 개수로 판단)
@@ -489,14 +523,30 @@ export async function generatePost(topic, options = {}) {
     logger.info(`항목이 ${count}개라 표를 나눠 받고 대표 항목만 상세하게 씁니다.`);
   }
 
+  /* 1단계 — 웹 검색으로 자료를 모은다. (설정에서 끄면 건너뛴다) */
+  options.onResearch?.();
+  const research = await runResearch(topic, { shape, count, signal: options.signal });
+  const researchBlock = research ? buildResearchBlock(research) : '';
+
+  if (settings.research.enabled && settings.research.requireSources
+      && !(research?.sources?.length)) {
+    throw new Error(
+      '웹 검색으로 출처를 구하지 못해 글을 쓰지 않았습니다. '
+      + '(설정에서 "출처를 못 구하면 글을 쓰지 않기" 를 끄면 검색 없이도 씁니다)',
+    );
+  }
+
+  /* 2단계 — 도구를 끄고, 모아온 자료만 보고 글을 쓴다. */
   const reply = await runClaudeJson(
-    buildMainPrompt(topic, settings, { guidelineBlock, exampleBlock, shape, count }),
+    buildMainPrompt(topic, settings, { guidelineBlock, exampleBlock, researchBlock, shape, count }),
     { systemPrompt, signal: options.signal },
   );
 
   let post = normalize(reply.data, topic, settings, shape);
   post.model = reply.model || '';
-  post.costUsd = reply.costUsd || 0;
+  post.costUsd = (reply.costUsd || 0) + (research?.costUsd || 0);
+  post.research = research;
+  post.sources = settings.research.showSources ? (research?.sources || []) : [];
 
   // 큰 표는 본문과 따로, 구간을 나눠 받는다.
   if (needsChunking) {

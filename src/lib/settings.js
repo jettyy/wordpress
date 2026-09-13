@@ -33,6 +33,16 @@ export const DEFAULT_SETTINGS = {
     useAiSlug: true,             // AI가 만든 영문 슬러그를 주소로 사용
   },
 
+  // 자료 조사 (웹 검색)
+  research: {
+    enabled: true,               // 글을 쓰기 전에 웹 검색으로 사실을 모은다
+    maxSearches: 5,              // 한 주제당 검색 횟수 상한 (프롬프트로 제한)
+    timeoutMs: 420000,           // 검색은 오래 걸린다. 넉넉히.
+    requireSources: false,       // 출처를 못 구하면 글을 쓰지 않을지
+    showSources: true,           // 글 끝에 출처 목록을 붙일지
+    sourcesHeading: '참고 자료',
+  },
+
   // 애드센스 승인 준수 점검
   adsense: {
     enforce: true,               // 어기면 자동으로 고쳐 쓰게 한다
