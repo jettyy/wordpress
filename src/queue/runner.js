@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { STATUS, updateJob, nextPending, stats } from '../lib/store.js';
+import { STATUS, updateJob, nextPending, stats, latestPublishAt } from '../lib/store.js';
 import { getSettings } from '../lib/settings.js';
 import { generatePost, countChars } from '../content/generator.js';
 import { summarize } from '../content/adsense.js';
@@ -9,6 +9,7 @@ import { buildPostContent, buildPreviewHtml } from '../content/gutenberg.js';
 import { buildMarkdown } from '../content/markdown.js';
 import { saveDraft } from '../wordpress/publisher.js';
 import { readSiteInfo } from '../wordpress/client.js';
+import { resolvePublishTarget, formatPublishAt } from '../wordpress/schedule.js';
 import { OUTPUT_DIR, ensureDirs } from '../lib/paths.js';
 import { logger, push } from '../lib/events.js';
 import { sleep, randomBetween, slugify } from '../lib/util.js';
@@ -160,25 +161,38 @@ async function processJob(job) {
 
   const dir = archivePost(job, post, thumb.filePath);
 
-  updateJob(job.id, { status: STATUS.POSTING, message: '워드프레스에 임시저장하는 중...' });
+  // 언제 발행할지 정한다. 앞서 예약해 둔 글 뒤로 줄을 세워야
+  // 100편이 한꺼번에 쏟아지지 않는다.
+  const target = resolvePublishTarget({
+    now: new Date(),
+    lastAt: latestPublishAt(),
+    publish: settings.publish,
+  });
+  const WHAT = { draft: '임시저장', future: '예약 발행', publish: '발행' }[target.status];
+
+  updateJob(job.id, { status: STATUS.POSTING, message: `워드프레스에 ${WHAT}하는 중...` });
   const result = await saveDraft({
     post,
     thumbnailPath: thumb.filePath,
     jobId: job.id,
     signal: state.abort?.signal,
+    status: target.status,
+    dateGmt: target.dateGmt,
   });
 
+  const when = target.at ? ` → ${formatPublishAt(target.at)} 발행 예정` : '';
   updateJob(job.id, {
     status: STATUS.DONE,
-    message: compliance?.ok
-      ? '임시저장 완료 (준수 검사 통과)'
-      : `임시저장 완료 (${summarize(compliance)})`,
+    message: `${WHAT} 완료${when} (${compliance?.ok ? '준수 검사 통과' : summarize(compliance)})`,
     archiveDir: path.basename(dir),
     editUrl: result.editUrl || '',
     postUrl: result.previewUrl || '',
+    wpStatus: result.status || target.status,
+    publishAt: target.at ? target.at.toISOString() : '',
   });
   logger.info(
-    `[${job.topic}] 임시저장 완료 (글 ID ${result.id})${result.editUrl ? ` → ${result.editUrl}` : ''}`,
+    `[${job.topic}] ${WHAT} 완료 (글 ID ${result.id})${when}`
+    + `${result.editUrl ? ` → ${result.editUrl}` : ''}`,
     { jobId: job.id },
   );
 }

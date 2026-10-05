@@ -1,7 +1,7 @@
 import { getSettings } from '../lib/settings.js';
 import { logger } from '../lib/events.js';
 import { buildPostContent, buildImageBlock } from '../content/gutenberg.js';
-import { uploadMedia, ensureTags, createDraft } from './client.js';
+import { uploadMedia, ensureTags, createPost } from './client.js';
 
 /**
  * 글 하나를 워드프레스에 임시저장한다.
@@ -11,12 +11,14 @@ import { uploadMedia, ensureTags, createDraft } from './client.js';
  *     에디터가 미디어 라이브러리의 파일과 연결한다)
  *  2) 그 이미지 블록을 끼워 본문 마크업을 완성한다
  *  3) 태그 이름을 ID 로 바꾼다
- *  4) 초안으로 저장한다 (발행은 하지 않는다)
+ *  4) 설정한 상태로 저장한다 (임시저장 / 예약 발행 / 바로 발행)
  *
  * 중간 단계가 실패해도 글 자체는 저장되도록 설계했다.
  * 이미지가 안 올라갔다고 1,800자짜리 글을 버릴 이유는 없다.
  */
-export async function saveDraft({ post, thumbnailPath, jobId = '', signal }) {
+export async function saveDraft({
+  post, thumbnailPath, jobId = '', signal, status = 'draft', dateGmt = '',
+}) {
   const settings = getSettings();
 
   /* 1. 썸네일 업로드 ------------------------------------------------ */
@@ -52,8 +54,8 @@ export async function saveDraft({ post, thumbnailPath, jobId = '', signal }) {
     }
   }
 
-  /* 4. 초안 저장 ----------------------------------------------------- */
-  const result = await createDraft({
+  /* 4. 저장 ---------------------------------------------------------- */
+  const result = await createPost({
     title: post.title,
     content,
     excerpt: post.summary,
@@ -61,6 +63,8 @@ export async function saveDraft({ post, thumbnailPath, jobId = '', signal }) {
     tagIds,
     categoryId: Number(settings.site.categoryId) || 0,
     featuredMediaId: media && settings.thumbnail.featured ? media.id : 0,
+    status,
+    dateGmt,
     signal,
   });
 

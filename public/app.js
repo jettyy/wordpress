@@ -119,6 +119,38 @@ function renderCategories() {
   select.value = (state.categories || []).some((c) => String(c.id) === current) ? current : '0';
 }
 
+/** 발행 방식에 따라 칸을 보여주고, 한 줄 요약을 띄운다. */
+function renderPublish() {
+  const p = state.settings?.publish;
+  if (!p) return;
+  const publishing = p.mode === 'publish';
+  const scheduled = publishing && p.timing === 'schedule';
+
+  $('publish-options').classList.toggle('hidden', !publishing);
+  $('btn-preview-schedule').disabled = !scheduled;
+  for (const id of ['s-pub-start', 's-pub-interval', 's-pub-random', 's-pub-window', 's-pub-from', 's-pub-to']) {
+    $(id).disabled = !scheduled;
+  }
+
+  let summary = '임시저장만 합니다';
+  if (publishing && p.timing === 'now') summary = '만들자마자 바로 발행합니다';
+  else if (scheduled) {
+    summary = `${p.intervalMinutes}분 간격`
+      + (p.randomExtraMinutes ? ` + 랜덤 0~${p.randomExtraMinutes}분` : '')
+      + (p.startAt ? ` · 첫 글 ${p.startAt}` : '')
+      + (p.window.enabled ? ` · ${p.window.from}~${p.window.to} 사이에만` : '');
+  }
+  $('publish-summary').textContent = summary;
+
+  $('run-note').innerHTML = publishing
+    ? (scheduled
+      ? '글은 워드프레스에 <b>예약됨</b> 상태로 올라가고 정한 시각에 자동으로 발행됩니다. '
+        + '나가기 전까지는 얼마든지 고칠 수 있습니다.'
+      : '글이 <b>바로 발행</b>됩니다. 사실관계를 확인할 틈이 없으니 주의하세요.')
+    : '발행은 하지 않습니다. <b>임시저장</b>까지만 하니 워드프레스 글 목록의 '
+      + '<b>임시글</b>에서 사실관계를 확인하고 직접 발행하세요.';
+}
+
 function renderRules() {
   $('rule-list').innerHTML = (state.rules || [])
     .map((rule) => `<li><span class="rule-dot"></span>${escapeHtml(rule.label)}</li>`)
@@ -195,11 +227,25 @@ function sourceCell(job) {
     + `${job.searches}회 / ${job.sourceCount}건</span>`;
 }
 
+/** 이 글이 언제 나가는지. 예약이면 시각을, 임시저장이면 표시만. */
+function publishCell(job) {
+  if (!job.wpStatus) return '<span class="hint">-</span>';
+  if (job.wpStatus === 'draft') return '<span class="check-badge">임시글</span>';
+  if (job.wpStatus === 'publish') return '<span class="check-badge pass">발행됨</span>';
+  const at = job.publishAt ? new Date(job.publishAt) : null;
+  const when = at
+    ? at.toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : '예약됨';
+  const left = at ? Math.round((at - Date.now()) / 60000) : 0;
+  const tip = at && left > 0 ? `약 ${left}분 뒤에 워드프레스가 자동으로 발행합니다.` : '발행 예정입니다.';
+  return `<span class="check-badge pass" title="${escapeHtml(tip)}">${escapeHtml(when)}</span>`;
+}
+
 function renderJobs() {
   const body = $('job-body');
   const jobs = state.jobs || [];
   if (!jobs.length) {
-    body.innerHTML = '<tr><td colspan="11" class="empty">아직 추가된 주제가 없습니다.</td></tr>';
+    body.innerHTML = '<tr><td colspan="12" class="empty">아직 추가된 주제가 없습니다.</td></tr>';
     return;
   }
   const current = state.runner?.currentJobId;
@@ -237,6 +283,7 @@ function renderJobs() {
         <td>${job.charCount ? job.charCount.toLocaleString() : '-'}</td>
         <td>${complianceCell(job)}</td>
         <td class="src-cell">${sourceCell(job)}</td>
+        <td class="src-cell">${publishCell(job)}</td>
         <td>${job.tableRows ? `${job.tableRows}행` : '-'}</td>
         <td class="model-cell">${escapeHtml(shortModel(job.model))}</td>
         <td class="thumb-cell">${thumb}</td>
@@ -319,6 +366,16 @@ function renderSettings() {
   $('image-key-state').textContent = s.image.apiKeySet
     ? '저장된 키가 있습니다. 바꿀 때만 새로 입력하세요.'
     : 'aistudio.google.com 에서 무료로 발급됩니다';
+
+  $('s-pub-mode').value = s.publish.mode;
+  $('s-pub-timing').value = s.publish.timing;
+  $('s-pub-start').value = s.publish.startAt || '';
+  $('s-pub-interval').value = s.publish.intervalMinutes;
+  $('s-pub-random').value = s.publish.randomExtraMinutes;
+  $('s-pub-window').checked = Boolean(s.publish.window.enabled);
+  $('s-pub-from').value = s.publish.window.from;
+  $('s-pub-to').value = s.publish.window.to;
+  renderPublish();
 
   $('s-delay-min').value = s.run.delayMinSec;
   $('s-delay-max').value = s.run.delayMaxSec;
@@ -444,6 +501,7 @@ function collectSettings() {
       model: $('s-image-model').value.trim(),
       style: $('s-image-style').value,
     },
+    publish: collectPublish(),
     run: {
       delayMinSec: Number($('s-delay-min').value),
       delayMaxSec: Number($('s-delay-max').value),
@@ -691,6 +749,52 @@ $('btn-test-ai').onclick = async () => {
     box.textContent = `실패: ${error.message}`;
   } finally {
     button.disabled = false;
+  }
+};
+
+/* ---------- 발행 방식 ---------- */
+
+function collectPublish() {
+  return {
+    mode: $('s-pub-mode').value,
+    timing: $('s-pub-timing').value,
+    startAt: $('s-pub-start').value,
+    intervalMinutes: Number($('s-pub-interval').value),
+    randomExtraMinutes: Number($('s-pub-random').value),
+    window: {
+      enabled: $('s-pub-window').checked,
+      from: $('s-pub-from').value || '08:00',
+      to: $('s-pub-to').value || '23:00',
+    },
+  };
+}
+
+for (const id of ['s-pub-mode', 's-pub-timing', 's-pub-start', 's-pub-interval',
+  's-pub-random', 's-pub-window', 's-pub-from', 's-pub-to']) {
+  $(id).addEventListener('change', async () => {
+    await patchSettings({ publish: collectPublish() });
+    renderPublish();
+    if (id === 's-pub-mode') {
+      toast($('s-pub-mode').value === 'publish'
+        ? '발행까지 합니다. 아래에서 시각을 정해 주세요.'
+        : '임시저장만 합니다.');
+    }
+  });
+}
+
+$('btn-preview-schedule').onclick = async () => {
+  const box = $('publish-preview');
+  box.classList.remove('hidden', 'bad', 'good');
+  box.textContent = '계산하는 중...';
+  try {
+    const data = await api('/api/publish/preview', { method: 'POST', body: collectPublish() });
+    box.classList.add('good');
+    box.textContent = '다음 글들이 나갈 시각입니다.\n\n'
+      + data.times.map((t, i) => `${String(i + 1).padStart(2)}편  ${t}`).join('\n')
+      + (data.after ? `\n\n이미 예약된 글(${data.after}) 뒤로 이어 붙였습니다.` : '');
+  } catch (error) {
+    box.classList.add('bad');
+    box.textContent = `실패: ${error.message}`;
   }
 };
 

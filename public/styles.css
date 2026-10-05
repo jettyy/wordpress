@@ -163,6 +163,7 @@ tr.active { background: #f2f9fc; }
   display: inline-block; padding: 2px 9px; border-radius: 999px;
   font-size: 11.5px; font-weight: 700; white-space: nowrap; cursor: help;
 }
+.check-badge { background: #eceff1; color: var(--muted); }
 .check-badge.pass { background: #e7f5ec; color: var(--ok); }
 .check-badge.fail { background: #fdf3e0; color: var(--warn); }
 

@@ -88,6 +88,8 @@ export function addTopics(topics) {
       unverified: 0,         // 조사에서 확인하지 못한 항목 수
       editUrl: '',
       postUrl: '',
+      wpStatus: '',          // draft | future | publish
+      publishAt: '',         // 예약 발행 시각 (ISO)
       archiveDir: '',
       createdAt: nowIso(),
       updatedAt: nowIso(),
@@ -126,6 +128,22 @@ export function clearJobs(onlyFinished = false) {
 
 export function resetJob(id) {
   return updateJob(id, { status: STATUS.PENDING, message: '', detail: '', attempts: 0 });
+}
+
+/**
+ * 이미 예약해 둔 글 중 가장 늦은 발행 시각.
+ * 다음 글은 그 뒤에 줄을 세워야 한꺼번에 쏟아지지 않는다.
+ * 작업 목록에서 바로 읽으므로 프로그램을 껐다 켜도 간격이 유지된다.
+ */
+export function latestPublishAt() {
+  let latest = null;
+  for (const job of load()) {
+    if (!job.publishAt) continue;
+    const at = new Date(job.publishAt);
+    if (Number.isNaN(at.getTime())) continue;
+    if (!latest || at > latest) latest = at;
+  }
+  return latest;
 }
 
 export function nextPending() {

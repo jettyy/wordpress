@@ -317,37 +317,49 @@ export async function uploadMedia(filePath, { title = '', alt = '' } = {}) {
 /* ------------------------------------------------------------------ */
 
 /**
- * 초안(임시저장)으로 글을 올린다.
+ * 글을 올린다.
  *
- * 이 프로그램은 **절대 발행하지 않는다.** status 는 항상 'draft' 다.
- * 혹시라도 다른 값이 흘러 들어오면 여기서 막는다.
- * (블로거판에서 [저장]과 [게시] 버튼을 구분하던 장치와 같은 역할이다.)
+ * status 는 셋 중 하나다.
+ *   draft   — 임시저장. 사람이 확인하고 직접 발행한다.
+ *   publish — 바로 발행.
+ *   future  — 예약 발행. date_gmt 시각이 되면 워드프레스가 알아서 내보낸다.
+ *
+ * 어느 쪽이든 **설정에서 고른 값만** 들어온다. 아는 상태가 아니면 여기서 막는다.
  */
-export async function createDraft({
-  title, content, excerpt, slug, tagIds = [], categoryId = 0, featuredMediaId = 0, signal,
+const ALLOWED_STATUS = new Set(['draft', 'publish', 'future']);
+
+export async function createPost({
+  title, content, excerpt, slug, tagIds = [], categoryId = 0, featuredMediaId = 0,
+  status = 'draft', dateGmt = '', signal,
 }) {
+  // 안전장치: 아는 상태만 보낸다. 오타 하나로 엉뚱한 상태의 글이 생기지 않게.
+  if (!ALLOWED_STATUS.has(status)) {
+    throw new Error(`알 수 없는 글 상태입니다: ${status}`);
+  }
+  // 예약 발행(future)인데 시각이 없으면 워드프레스가 바로 발행해 버린다.
+  if (status === 'future' && !dateGmt) {
+    throw new Error('예약 발행인데 발행 시각이 없습니다.');
+  }
+
   const body = {
     title,
     content,
-    status: 'draft',
+    status,
     comment_status: 'open',
   };
+  if (dateGmt) body.date_gmt = dateGmt;
   if (excerpt) body.excerpt = excerpt;
   if (slug) body.slug = slug;
   if (tagIds.length) body.tags = tagIds;
   if (categoryId) body.categories = [categoryId];
   if (featuredMediaId) body.featured_media = featuredMediaId;
 
-  if (body.status !== 'draft') {
-    throw new Error('안전장치: 이 프로그램은 임시저장만 합니다. 발행은 사람이 직접 하세요.');
-  }
-
   const created = await request('/wp/v2/posts', { method: 'POST', body, timeoutMs: 120000, signal });
   if (!created?.id) throw new Error('글을 저장했지만 글 ID 를 받지 못했습니다.');
 
-  if (created.status !== 'draft') {
+  if (created.status !== status) {
     logger.warn(
-      `워드프레스가 글 상태를 '${created.status}' 로 저장했습니다. `
+      `요청한 상태는 '${status}' 인데 워드프레스가 '${created.status}' 로 저장했습니다. `
       + '관리자에서 상태를 확인해 주세요.',
     );
   }
@@ -356,7 +368,11 @@ export async function createDraft({
   return {
     id: created.id,
     status: created.status,
+    dateGmt: created.date_gmt || '',
     editUrl: `${site}/wp-admin/post.php?post=${created.id}&action=edit`,
     previewUrl: created.link || '',
   };
 }
+
+/** 예전 이름. 부르는 곳이 남아 있을 수 있어 남겨 둔다. */
+export const createDraft = (options) => createPost({ ...options, status: 'draft' });

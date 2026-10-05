@@ -4,7 +4,9 @@ import { bus, recentLogs, logger, logRaw, logFile } from './lib/events.js';
 import {
   getSettings, saveSettings, publicSettings, DEFAULT_SETTINGS,
 } from './lib/settings.js';
-import { listJobs, addTopics, removeJob, clearJobs, resetJob, stats, STATUS } from './lib/store.js';
+import {
+  listJobs, addTopics, removeJob, clearJobs, resetJob, stats, latestPublishAt, STATUS,
+} from './lib/store.js';
 import { parseTopics, normalizeSiteUrl } from './lib/util.js';
 import {
   verifyConnection, readSiteInfo, disconnect, listCategories,
@@ -17,6 +19,7 @@ import { runResearch } from './content/research.js';
 import {
   generateBackground, pickAspectRatio, getImageModels, verifyKoreanText,
 } from './content/imagegen.js';
+import { computePublishAt, formatPublishAt } from './wordpress/schedule.js';
 import { listExamples, addExample, removeExample, setExampleEnabled, MAX_EXAMPLE_CHARS } from './content/examples.js';
 import { prepareBrowser, closeRenderBrowser } from './lib/playwright.js';
 import * as runner from './queue/runner.js';
@@ -297,6 +300,25 @@ app.post('/api/image/test', wrap(async (req, res) => {
       candidates: ranked.slice(0, 8), settings: publicSettings(),
     });
   }
+}));
+
+/**
+ * 지금 설정으로 다음 글들이 언제 나갈지 미리 계산해 본다.
+ * 100편을 걸어놓기 전에 "새벽에 올라가지는 않나" 를 눈으로 확인할 수 있어야 한다.
+ */
+app.post('/api/publish/preview', wrap(async (req, res) => {
+  const publish = { ...getSettings().publish, ...(req.body || {}) };
+  const now = new Date();
+  let lastAt = latestPublishAt();
+  const after = lastAt && lastAt > now ? formatPublishAt(lastAt) : '';
+
+  const times = [];
+  for (let i = 0; i < 5; i += 1) {
+    const at = computePublishAt({ now, lastAt, publish });
+    times.push(formatPublishAt(at));
+    lastAt = at;
+  }
+  res.json({ ok: true, times, after });
 }));
 
 /* ---------- 참고 예시 ---------- */

@@ -24,6 +24,9 @@ import {
 import { renderTemplate } from '../src/content/templates/index.js';
 import { buildResearchBlock, isUsableUrl } from '../src/content/research.js';
 import { normalizeSiteUrl, normalizeSlug, parseTopics } from '../src/lib/util.js';
+import {
+  parseClock, clampToWindow, computePublishAt, resolvePublishTarget,
+} from '../src/wordpress/schedule.js';
 
 const settings = structuredClone(DEFAULT_SETTINGS);
 
@@ -406,7 +409,7 @@ test('검색을 못 돌린 조사 결과는 미리보기에 경고로 남는다'
   assert.ok(html.includes('확인하지 못한 내용'), '미확인 목록이 없습니다');
 });
 
-console.log('\n[5] 보조 함수');
+console.log('\n[8] 보조 함수');
 
 test('주제 문자열에서 글의 모양을 알아낸다', () => {
   assert.equal(detectShape('국가기술자격증 TOP 5').shape, 'items');
@@ -433,7 +436,133 @@ test('개수를 안 쓴 순위 주제는 목표 개수만큼 크게 뽑는다', 
   assert.equal(detectShape('전세 계약 전 확인할 서류', 100).shape, 'general');
 });
 
-console.log('\n[6] 썸네일 배경 그림');
+console.log('\n[6] 발행 예약');
+
+// 검사 중에는 무작위를 고정해 결과가 흔들리지 않게 한다.
+const noRandom = () => 0;
+const halfRandom = () => 0.5;
+const basePublish = {
+  mode: 'publish', timing: 'schedule', startAt: '',
+  intervalMinutes: 180, randomExtraMinutes: 60,
+  window: { enabled: false, from: '08:00', to: '23:00' },
+};
+const at = (text) => new Date(text);
+const hhmm = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+
+test('HH:mm 을 읽고, 이상한 값은 기본값으로 돌린다', () => {
+  assert.deepEqual(parseClock('08:30'), { hour: 8, minute: 30 });
+  assert.deepEqual(parseClock('9:05'), { hour: 9, minute: 5 });
+  assert.deepEqual(parseClock('25:00', null), null, '25시를 받아들였습니다');
+  assert.deepEqual(parseClock('', null), null);
+  assert.deepEqual(parseClock('아침', null), null);
+});
+
+test('첫 글은 간격 + 랜덤만큼 뒤에 나간다', () => {
+  const now = at('2026-03-10T10:00:00');
+  const first = computePublishAt({ now, lastAt: null, publish: basePublish, random: noRandom });
+  assert.equal(hhmm(first), '13:00', '3시간 뒤가 아닙니다');
+
+  // 랜덤 0.5 면 60분의 절반인 30분이 더 붙는다.
+  const jittered = computePublishAt({ now, lastAt: null, publish: basePublish, random: halfRandom });
+  assert.equal(hhmm(jittered), '13:30', '랜덤 추가가 안 붙었습니다');
+});
+
+test('다음 글은 앞서 예약한 글 뒤로 줄을 선다', () => {
+  const now = at('2026-03-10T10:00:00');
+  const lastAt = at('2026-03-10T18:00:00');
+  const next = computePublishAt({ now, lastAt, publish: basePublish, random: noRandom });
+  assert.equal(hhmm(next), '21:00', '마지막 예약 뒤가 아닙니다');
+  // 지금보다 이른 예약은 무시하고 지금을 기준으로 잡는다.
+  const stale = computePublishAt({
+    now, lastAt: at('2026-03-09T01:00:00'), publish: basePublish, random: noRandom,
+  });
+  assert.equal(hhmm(stale), '13:00', '지난 예약을 기준으로 잡았습니다');
+});
+
+test('첫 글 시각을 정하면 그 시각에, 지났으면 내일로', () => {
+  const publish = { ...basePublish, startAt: '09:00' };
+  const morning = computePublishAt({
+    now: at('2026-03-10T07:00:00'), lastAt: null, publish, random: noRandom,
+  });
+  assert.equal(morning.getDate(), 10, '오늘이 아닙니다');
+  assert.equal(hhmm(morning), '09:00');
+
+  const afternoon = computePublishAt({
+    now: at('2026-03-10T14:00:00'), lastAt: null, publish, random: noRandom,
+  });
+  assert.equal(afternoon.getDate(), 11, '내일로 안 넘어갔습니다');
+  assert.equal(hhmm(afternoon), '09:00');
+});
+
+test('발행 시간대 밖이면 안으로 끌어온다', () => {
+  const window = { enabled: true, from: '08:00', to: '23:00' };
+  // 새벽 3시 → 그날 아침 8시
+  const early = clampToWindow(at('2026-03-10T03:00:00'), window);
+  assert.equal(early.getDate(), 10);
+  assert.equal(hhmm(early), '08:00');
+  // 밤 11시 30분 → 다음 날 아침 8시
+  const late = clampToWindow(at('2026-03-10T23:30:00'), window);
+  assert.equal(late.getDate(), 11, '다음 날로 안 넘어갔습니다');
+  assert.equal(hhmm(late), '08:00');
+  // 안에 있으면 그대로
+  assert.equal(hhmm(clampToWindow(at('2026-03-10T15:00:00'), window)), '15:00');
+  // 꺼져 있으면 손대지 않는다
+  assert.equal(hhmm(clampToWindow(at('2026-03-10T03:00:00'), { enabled: false })), '03:00');
+});
+
+test('시간대를 켜면 새벽 발행이 하나도 안 생긴다', () => {
+  const publish = {
+    ...basePublish, intervalMinutes: 200, randomExtraMinutes: 0,
+    window: { enabled: true, from: '08:00', to: '23:00' },
+  };
+  const now = at('2026-03-10T09:00:00');
+  let lastAt = null;
+  for (let i = 0; i < 30; i += 1) {
+    lastAt = computePublishAt({ now, lastAt, publish, random: noRandom });
+    const hour = lastAt.getHours();
+    assert.ok(hour >= 8 && hour <= 23, `${i + 1}번째 글이 ${hhmm(lastAt)} 에 잡혔습니다`);
+  }
+});
+
+test('임시저장 모드면 예약을 잡지 않는다', () => {
+  const target = resolvePublishTarget({
+    now: at('2026-03-10T10:00:00'), lastAt: null,
+    publish: { ...basePublish, mode: 'draft' }, random: noRandom,
+  });
+  assert.equal(target.status, 'draft');
+  assert.equal(target.dateGmt, '');
+  assert.equal(target.at, null);
+});
+
+test('바로 발행을 고르면 시각 없이 publish 로 간다', () => {
+  const target = resolvePublishTarget({
+    now: at('2026-03-10T10:00:00'), lastAt: null,
+    publish: { ...basePublish, timing: 'now' }, random: noRandom,
+  });
+  assert.equal(target.status, 'publish');
+  assert.equal(target.dateGmt, '');
+});
+
+test('예약 발행은 future 와 UTC 시각을 보낸다', () => {
+  const target = resolvePublishTarget({
+    now: at('2026-03-10T10:00:00'), lastAt: null, publish: basePublish, random: noRandom,
+  });
+  assert.equal(target.status, 'future');
+  // 워드프레스 date_gmt 는 밀리초와 Z 가 없는 ISO 꼴이어야 한다.
+  assert.match(target.dateGmt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/, `형식이 다릅니다: ${target.dateGmt}`);
+  assert.equal(target.dateGmt, target.at.toISOString().replace(/\.\d{3}Z$/, ''));
+});
+
+test('간격이 0이면 예약 대신 바로 발행한다', () => {
+  // 지난 시각으로 future 를 보내면 워드프레스가 안 내보내고 붙잡아 둔다.
+  const target = resolvePublishTarget({
+    now: at('2026-03-10T10:00:00'), lastAt: null,
+    publish: { ...basePublish, intervalMinutes: 0, randomExtraMinutes: 0 }, random: noRandom,
+  });
+  assert.equal(target.status, 'publish', '지난 시각으로 예약을 걸었습니다');
+});
+
+console.log('\n[7] 썸네일 배경 그림');
 
 test('썸네일 비율에 가장 가까운 허용 비율을 고른다', () => {
   assert.equal(pickAspectRatio(1200, 630), '16:9');

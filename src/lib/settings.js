@@ -87,6 +87,20 @@ export const DEFAULT_SETTINGS = {
     emoji: false,                // 애드센스 글은 기호를 자제하는 편이 안전하다
   },
 
+  // 발행 방식
+  //
+  // draft   — 임시저장만 한다. 사람이 확인하고 직접 발행한다. (기본)
+  // publish — 발행까지 한다. 예약을 걸면 워드프레스가 정해진 시각에 내보낸다.
+  publish: {
+    mode: 'draft',               // draft | publish
+    timing: 'schedule',          // now(바로 발행) | schedule(예약 발행)
+    startAt: '',                 // 첫 글 발행 시각 'HH:mm'. 비우면 지금부터 간격만큼 뒤
+    intervalMinutes: 180,        // 글 사이 간격 (분)
+    randomExtraMinutes: 60,      // 0~이 값 사이 무작위로 더 기다린다
+    // 새벽에 글이 올라오면 사람이 쓴 블로그처럼 보이지 않는다.
+    window: { enabled: true, from: '08:00', to: '23:00' },
+  },
+
   // 실행
   run: {
     delayMinSec: 20,

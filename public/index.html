@@ -292,9 +292,59 @@
     </div>
   </section>
 
+  <section class="card" id="card-publish">
+    <div class="card-head">
+      <h2>7. 발행 방식</h2>
+      <span class="hint" id="publish-summary">임시저장만 합니다</span>
+    </div>
+    <div class="grid">
+      <label class="wide">글을 어떻게 올릴까요
+        <select id="s-pub-mode">
+          <option value="draft">임시저장만 — 사람이 확인하고 직접 발행 (기본)</option>
+          <option value="publish">발행까지 — 정해진 시각에 자동으로 발행</option>
+        </select>
+      </label>
+    </div>
+    <div class="grid" id="publish-options">
+      <label class="wide">발행 시점
+        <select id="s-pub-timing">
+          <option value="schedule">예약 발행 — 글마다 시각을 정해 그때 나가게 (권장)</option>
+          <option value="now">바로 발행 — 만들자마자 즉시</option>
+        </select>
+      </label>
+      <label>첫 글 발행 시각
+        <input id="s-pub-start" type="time">
+        <span class="sub">비우면 지금부터 간격만큼 뒤에 첫 글이 나갑니다.
+          오늘 그 시각이 지났으면 내일로 잡힙니다</span>
+      </label>
+      <label>글 사이 간격 (분)
+        <input id="s-pub-interval" type="number" min="0" max="10080" step="10">
+        <span class="sub">정해진 시간입니다. 180이면 3시간마다 한 편</span>
+      </label>
+      <label>랜덤 추가 대기 (분)
+        <input id="s-pub-random" type="number" min="0" max="1440" step="5">
+        <span class="sub">0~이 값 사이에서 무작위로 더 기다립니다.
+          정확히 3시간마다 올라오면 자동화 티가 납니다</span>
+      </label>
+      <label class="check"><input id="s-pub-window" type="checkbox"> 발행 시간대 제한
+        <span class="sub">새벽에 글이 올라오면 사람이 쓴 블로그로 보이지 않습니다</span></label>
+      <label>시간대 시작<input id="s-pub-from" type="time"></label>
+      <label>시간대 끝<input id="s-pub-to" type="time"></label>
+    </div>
+    <div id="publish-preview" class="test-result hidden"></div>
+    <div class="row">
+      <button class="btn" id="btn-preview-schedule">다음 5편이 언제 나갈지 보기</button>
+    </div>
+    <p class="note">예약 발행을 고르면 워드프레스에 <b>예약됨</b> 상태로 올라가고,
+      정한 시각이 되면 <b>워드프레스가 알아서</b> 내보냅니다.
+      그래서 예약만 걸어두면 <b>이 프로그램과 컴퓨터를 꺼도</b> 글은 제때 나갑니다.<br>
+      나가기 전까지는 얼마든지 고칠 수 있고, 마음에 안 들면 워드프레스에서 임시글로 되돌리면 됩니다.
+      간격은 <b>이미 예약된 글 뒤로</b> 이어서 잡히므로, 나눠서 돌려도 시간이 겹치지 않습니다.</p>
+  </section>
+
   <section class="card">
     <div class="card-head">
-      <h2>7. 실행</h2>
+      <h2>8. 실행</h2>
       <span class="hint" id="run-stats">-</span>
     </div>
     <div class="row">
@@ -310,14 +360,14 @@
         <thead>
           <tr>
             <th>#</th><th>주제</th><th>상태</th><th>제목 / 메모</th>
-            <th>글자</th><th>준수</th><th>출처</th><th>표</th><th>모델</th><th>썸네일</th><th></th>
+            <th>글자</th><th>준수</th><th>출처</th><th>발행</th><th>표</th><th>모델</th><th>썸네일</th><th></th>
           </tr>
         </thead>
-        <tbody id="job-body"><tr><td colspan="11" class="empty">아직 추가된 주제가 없습니다.</td></tr></tbody>
+        <tbody id="job-body"><tr><td colspan="12" class="empty">아직 추가된 주제가 없습니다.</td></tr></tbody>
       </table>
     </div>
-    <p class="note">발행은 하지 않습니다. <b>임시저장</b>까지만 하니 워드프레스 글 목록의 <b>임시글</b>에서
-      사실관계를 확인하고 직접 발행하세요.</p>
+    <p class="note" id="run-note">발행은 하지 않습니다. <b>임시저장</b>까지만 하니 워드프레스 글 목록의
+      <b>임시글</b>에서 사실관계를 확인하고 직접 발행하세요.</p>
   </section>
 
   <section class="card">
